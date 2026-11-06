@@ -1,0 +1,8 @@
+[submodule "MoviePilot"]
+	path = MoviePilot
+	url = https://github.com/thntime/MoviePilot.git
+	branch = v3
+[submodule "MoviePilot-Frontend"]
+	path = MoviePilot-Frontend
+	url = https://github.com/thntime/MoviePilot-Frontend.git
+	branch = v3
