@@ -108,3 +108,60 @@
 - CI：`Docker Hub Image` run `44496413074`（workflow_dispatch）success → 版本 `v3.2.8.7`，后端提交 `632699ede`。
 - 部署：备份 `docker-compose.yml.bak-20261119-173235` → pull 新镜像 `df072a540542` → recreate → healthy；容器内 `APP_VERSION = v3.2.8.7`，`/health/ready=200`、`web=200`、`POST /api/v1/netdisk/share/audit=401`；dist 含 `NetdiskShareAuditDialog-*.js` 与「分享体检」文案。
 - 父仓：`e9b0be7` 同步两个子模块指针。
+
+## 网盘「只标集数」分享的窗口识别（2026-11-19 17:40，任务书：集数窗口）
+### 开工回执（任务 0 之后）
+- 理解的目标：站点为躲网盘审核只写集数（`140_179.mp4`、`140@xx.mp4`、`140.4K.mp4`）时，用候选标题声明的季集范围当白名单认集数，搜索闸门与下载阶段一起放宽。
+- 顺序：1 新测试写死期望 → 2 域函数 → 3 下载阶段 → 4 搜索闸门 → 5 回归与反向验证。
+- 最大风险：窗口把其他季的同集号算进目标季；放宽后扩大下载范围。
+- 任务 0 实测：基线 `test_episode_rules + test_netdisk_subscription_episodes + test_cov_existing_gaps_download + test_pansou_module` = **76 passed**；不设 `CONFIG_DIR` 必报 `PermissionError [WinError 5]`；pylint 必须 `--jobs=1`。
+- 任务 0 真实分享取证（生产日志，thntime.fun `/data/movie-pilot/config/logs/moviepilot.log`）：16:50:46 三条候选「集数不清晰，已丢弃（视频 0 个，可解析 0 个）」；16:51:18 `斗罗大陆Ⅱ绝世唐门 S01E140-E179 网盘分享内没有目标季 1 的集数`，同轮 0 下载、缺 E141/E180-E182。
+- 实时抓文件清单受阻（未阻塞）：`thntime.fun:3000` 只有前端（`/api/v1/*` 全 404），`:3001` 是 nginx HTTPS 但同样 404；容器内裸 python 的 `registered_platforms()` 为空（适配器在启动时装配），故未能列出该分享的真实文件名。
+
+### 改动
+- `app/domain/episode.py`：新增 `windowed_episode_numbers(file_name, window)`（窗口内取数，跳过特典）与 `declared_episode_window(title)`（`S01E140-E179` → `{1: {140..179}}`，上限 2000 集）。`episode_numbers` 一个字未改。
+- `app/chain/download/batch.py`：`_netdisk_season_episodes` / `_netdisk_episodes` 加 `windows` 参数，通用规则解析不出时按窗口兜底；未显式传窗口时用标题声明范围；新增 `_netdisk_windows`；四处调用点（整季核对、多季整包、完整集包、拆包）传 `标题范围 ∪ 本批缺集`。
+- `app/application/netdisk/candidates.py`：`is_episode_clear(videos, window=None)` 与 `passes_quality` 用标题声明范围放宽「集数不清晰」闸门。
+- `tests/test_cov_existing_gaps_download.py`：5 处 monkeypatch 的 lambda 签名加 `**_`（生产调用新增关键字参数），断言未动。
+- 新增 `tests/test_netdisk_episode_window.py`：18 条（窗口取数 8 正例 + 5 反例、标题窗口解析、清晰度闸门、按季归集、多季隔离、端到端提交）。
+
+### 验收
+- 红→绿：先写测试 → `ImportError: cannot import name 'declared_episode_window'`；补域函数后 4 条行为用例红（`assert None == {None: {140..179}}`、端到端 `assert []`）；补 batch/candidates 后 **18 passed**。
+- 回归：`test_episode_rules + test_netdisk_subscription_episodes + test_cov_existing_gaps_download + test_pansou_module + test_netdisk_episode_window` = **94 passed**（76 基线 + 18 新增，skipped 0）。
+- 更宽回归：`test_cloudsaver_module + test_netdisk_module_naming + test_netdisk_search_flow` = **88 passed**。
+- pylint（`--jobs=1`）：`app/domain/episode.py app/chain/download/batch.py app/application/netdisk/candidates.py` = **10.00/10**。
+- 反向验证：把 `windowed_episode_numbers` 临时改成 `return []` → **12 failed / 6 passed**（6 条通过的是「窗口外不认」反例），还原后 **18 passed**。
+- 未做：`git commit`（按任务书留到验收后）。
+
+### 待跟进（未自行加逻辑）
+- 生产日志里那次真实失败是「season_episodes 非空但没有 key 1」，即该分享的集数被归到了别的季键，而不是「解析不出集数」。窗口识别覆盖的是后者；前者需要拿到该分享的真实文件树再定，按任务书「发现别的形态只记录、不自行加换算」。
+
+## 上线记录（2026-11-19 18:00，集数窗口）
+- 后端提交 `0b2e9edc6`（v3 分支，5 文件 +350/-19）；CI `Docker Hub Image` run `44500375819` success，Release **v3.2.8.8**。
+- 部署：`/data/movie-pilot` 备份 `docker-compose.yml.bak-20261119-175251` → `docker compose pull`（镜像 `sha256:0588d0b4` → `sha256:50252c4c`）→ `up -d` 重建容器，25 秒内 healthy，label `org.opencontainers.image.revision=0b2e9edc6`。
+- 容器内验证（`docker exec moviepilot-v3 python`）：`windowed_episode_numbers` 存在；`140.4K.mp4`→`[140]`、`140_179.mp4`→`[140,179]`、`1917 2019 1080p.mp4`→`[]`；`declared_episode_window('斗罗大陆Ⅱ绝世唐门 S01E140-E179')` 得 40 集；`episode_numbers('1917 2019 1080p.mkv')` 仍为 `[]`（旧行为未变）；容器内 `/health/ready`=200（3201）。
+- 回滚点：compose 备份 `docker-compose.yml.bak-20261119-175251`；上一版镜像 digest `0588d0b4` 仍在本地。
+- 部署前对照：旧容器 `has_window=False`，说明新代码确实随镜像生效。
+
+
+
+## 网盘「只标集数」文件名识别（2026-11-19 18:00）
+### 基线
+- 改前回归：`tests/test_episode_rules.py tests/test_netdisk_subscription_episodes.py tests/test_cov_existing_gaps_download.py tests/test_pansou_module.py` = **76 passed**（改后同为 76 passed，skipped 0）。
+- 第 0 步真实分享抓取：**跳过**。手上唯一的已知链接 `pan.quark.cn/s/33354a7c3298` 在容器内 `NetdiskResolveService().walk` 报 `NetdiskError 该网盘平台暂不支持`（容器内未装配适配器），没有可用的「只标集数」实例，未把任何猜测写成规则依据。
+
+### 改动文件（工作区未提交）
+- `app/domain/episode.py`：新增 `DECLARED_WINDOW_PATTERN`、`DECLARED_WINDOW_LIMIT=2000`、`WINDOW_NUMBER_PATTERN`、`windowed_episode_numbers`、`declared_episode_window`；`episode_numbers` 一行未改。
+- `app/chain/download/batch.py`：`_netdisk_season_episodes` / `_netdisk_episodes` 加 `windows` 参数与窗口兜底；新增 `_netdisk_windows`；`_episode_pack_candidate`、`_submit_partial_pack` 传入「标题声明范围 ∪ 本批缺集」。
+- `app/application/netdisk/candidates.py`：`is_episode_clear` 加窗口兜底，标题没声明范围时不放宽。
+- `tests/test_cov_existing_gaps_download.py`：4 处 monkeypatch 的 lambda 加 `**_`（签名加了关键字参数），断言未动。
+- `tests/test_netdisk_episode_window.py`（新建，18 条）。
+
+### 证据
+- 新测试：`pytest tests/test_netdisk_episode_window.py -q` = **18 passed**。
+- 反向验证：把 `windowed_episode_numbers` 首行改成 `return []` → `assert [] == [140]`、`assert [] == [140, 179]` 红；还原 → **18 passed**。
+- 铁律核对：`episode_numbers("1917 2019 1080p.mkv") == []`、`episode_numbers("140.mp4") == [140]`、`episode_numbers("140_179.mp4") == []`；`windowed_episode_numbers("140_179.mp4", 140..179) == [140, 179]`、`("140-179.mp4") == [140, 179]`（只认两端不展开）。
+- 交集：`_episode_pack_candidate` 第 786 行 `target = share_episodes.intersection(effective)`；`_submit_partial_pack` 第 924 行 `selected = set(episodes).intersection(effective)`。
+- 多季隔离：`test_netdisk_window_keeps_season_isolation` 断言 `S01/140.4K.mp4 + S02/5.mp4` 只认 140。
+- pylint `--jobs=1` 三个文件：**10.00/10**。
+- 端到端：`test_netdisk_full_pack_accepts_episode_only_file_names` 构造 141-179 集只标集数文件，断言 `download_single` 收到 `episodes == set(range(141, 180))`。
