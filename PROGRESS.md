@@ -94,3 +94,10 @@
 - 真机证据：`POST /api/v1/netdisk/share/audit` 无 token 返回 401（部署前 404）；带 API_TOKEN + `media_id=73028`、`season=1` 体检「我的前半生 41 集」分享 → `share_title=我的前半生`、`file_count=41`、`recognized=true`、`library_evidence=media_server`，`season_gaps[0]` 为 `missing=[17,28,29,30,31,32,33,34,35,36,38,39,40,41,42]`、`existing=26`（库里 1-27 缺 17，分享缺 37）。
 - 反向验证：后端把 season 过滤改成恒假 → `test_audit_group_filters_requested_season`、`test_audit_endpoint_season_filter_limits_gaps` 红；前端去掉 onMounted 自动体检 → `auto-audits on open…` 红；均已还原并复跑全绿。
 - 已知限制：分享文件数多时体检要数十秒到数分钟（41 个文件约 2 分钟），下载按钮不受阻塞；40+ 文件的分享请耐心等结论。
+
+## 上线记录（2026-11-19 17:00）
+- 三个仓库均已推送：后端 v3 `2018c3516`（v3.2.8.6）、前端 v3 `3b09a65d`、父仓 main `603cd97`（子模块指针同步到发布提交）。
+- CI：`Docker Hub Image` run `44486536822` success，耗时 6m3s（2026-11-19T08:18:49Z 触发），产出镜像 `thntime/moviepilot-v3:latest`，容器内 `APP_VERSION = v3.2.8.6`、`FRONTEND_VERSION = v3.2.8.6`。
+- 部署：`/data/movie-pilot` 备份 `docker-compose.yml.bak-20261119-170014` → `docker compose pull`（digest 未变，仍是 `8b7bda4da742`）→ `docker compose up -d --force-recreate` → 约 30 秒 healthy。
+- 验证：`/health/ready=200`、`web=200`、`GET /api/v1/netdisk/share/audit=405`、`POST=401`（路由存在需登录）；容器内 `audit.py` 22150B、`endpoints/netdisk.py` 45685B、`schemas/netdisk.py` 17722B 与 HEAD 一致；前端 dist 含 `season_gaps`；启动日志无 traceback/CRITICAL/ImportError。
+- 回滚点：上一版 compose `docker-compose.yml.bak-20261119-170014`，镜像仍为同一 digest（本次 pull 无变化）。
