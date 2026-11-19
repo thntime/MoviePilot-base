@@ -101,3 +101,10 @@
 - 部署：`/data/movie-pilot` 备份 `docker-compose.yml.bak-20261119-170014` → `docker compose pull`（digest 未变，仍是 `8b7bda4da742`）→ `docker compose up -d --force-recreate` → 约 30 秒 healthy。
 - 验证：`/health/ready=200`、`web=200`、`GET /api/v1/netdisk/share/audit=405`、`POST=401`（路由存在需登录）；容器内 `audit.py` 22150B、`endpoints/netdisk.py` 45685B、`schemas/netdisk.py` 17722B 与 HEAD 一致；前端 dist 含 `season_gaps`；启动日志无 traceback/CRITICAL/ImportError。
 - 回滚点：上一版 compose `docker-compose.yml.bak-20261119-170014`，镜像仍为同一 digest（本次 pull 无变化）。
+
+## 分享体检粘贴入口（2026-11-19 17:33）
+- 需求：原体检按钮只在「添加下载」弹窗里，链接由资源卡片带进来，无法直接粘贴自己的分享链接。
+- 前端新增：`src/components/dialog/NetdiskShareAuditDialog.vue`（粘链接 + 提取码 → 体检 → 按季缺口 + 复制集号）；`AccountSettingNetdisk.vue` 工具栏加「分享体检」按钮；`formatEpisodeRanges` 抽到 `src/utils/netdisk.ts` 供两处复用。前端提交 `7f5438b1`，`NetdiskShareAuditDialog.spec.ts` 2 passed，`AddDownloadDialog.spec.ts` 24 passed，`netdisk.spec.ts` 21 passed，typecheck 与 eslint 通过。
+- CI：`Docker Hub Image` run `44496413074`（workflow_dispatch）success → 版本 `v3.2.8.7`，后端提交 `632699ede`。
+- 部署：备份 `docker-compose.yml.bak-20261119-173235` → pull 新镜像 `df072a540542` → recreate → healthy；容器内 `APP_VERSION = v3.2.8.7`，`/health/ready=200`、`web=200`、`POST /api/v1/netdisk/share/audit=401`；dist 含 `NetdiskShareAuditDialog-*.js` 与「分享体检」文案。
+- 父仓：`e9b0be7` 同步两个子模块指针。
