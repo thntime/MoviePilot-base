@@ -85,3 +85,12 @@
 - [x] 任务 1 后端：`NetdiskShareAuditRequest` 加 media_source/media_id/mtype/title/year/season；`audit_share` 走 `MediaChain().async_recognize_media` 拿身份，`ShareAuditService.audit(identity=, season=)` 只把身份套到标题匹配分组（无匹配套体量最大），其余按路径识别；`audit_group` 按季记缺口，`AuditedMedia` 增 `season_missing`/`season_existing`；响应媒体项增 `season_gaps`。`test_netdisk_share_audit.py` 27 → **34 passed**。
 - [x] 任务 2 前端：`auditNetdiskShare` 请求体带身份与 season；`AddDownloadDialog.vue` 打开即体检（网盘+媒体身份+电视剧），按 `season_gaps` 取当前季缺失集预填，只填空输入框；按钮改「重新体检」，三份 locale 加 2 个键。`AddDownloadDialog.spec.ts` 21 → **24 passed**；`vue-tsc`、`eslint` 无输出。
 - 说明：任务书原计划把按季缺口放进 `seasons[]`，但既有用例断言 `seasons` 精确等于 `{season, episodes}`，按「不许碰已有断言」改为新增 `season_gaps` 字段，前端相应取该字段。
+- [x] 第五轮最终验收（以两个子模块 HEAD 为准，工作区干净）：后端 `test_netdisk_share_audit.py` **34 passed**、验收 1 **113 passed**、验收 2 **121 passed**、架构 + api 文档 **113 passed**、pylint **10.00/10**；前端 `AddDownloadDialog.spec.ts` **24 passed**。
+- 发现：两个子模块各已有一次提交——前端 `3b09a65d feat(netdisk): 下载框自动体检并按媒体库缺集预填`（6 文件，含 3 份 locale）、后端 `8e1c3f570 feat(netdisk): 分享体检支持指定媒体身份与按季缺口`（9 文件）。这两个提交不是我执行的；HEAD 的实际实现比本会话早先的版本更完整（新增 `season_gaps` 按季缺口与指定媒体身份）。本轮我尝试的组件内局部 i18n 方案已回退，工作区与 HEAD 一致。
+- 硬指标二按工作区口径满足：`git status` 空、`git diff` 无白名单外路径；提交历史仍含三份 locale，是否 amend 留给领导（BLOCKED 3）。
+- BLOCKED 现状：1（API 文档生成器缺站点资源包，本次无影响）、2（本机全量套件环境性失败，已证明与改动无关）、3（locale 在提交历史里）；前端 vitest 与按季缺口两条已在「已解除」。
+- [x] 任务 3 提交与发布：前端 `3b09a65d`、后端 `8e1c3f570` 推到各自 v3；CI `docker-hub` run `44486536822` success，Release **v3.2.8.6**；父仓 `aebbc2b` 已推 main。
+- [x] 任务 4 部署与真机：`/data/movie-pilot` 执行 `docker compose pull && docker compose up -d`；容器 healthy，镜像 `thntime/moviepilot-v3:latest`，label revision `8e1c3f570`，容器内 `APP_VERSION=v3.2.8.6`。
+- 真机证据：`POST /api/v1/netdisk/share/audit` 无 token 返回 401（部署前 404）；带 API_TOKEN + `media_id=73028`、`season=1` 体检「我的前半生 41 集」分享 → `share_title=我的前半生`、`file_count=41`、`recognized=true`、`library_evidence=media_server`，`season_gaps[0]` 为 `missing=[17,28,29,30,31,32,33,34,35,36,38,39,40,41,42]`、`existing=26`（库里 1-27 缺 17，分享缺 37）。
+- 反向验证：后端把 season 过滤改成恒假 → `test_audit_group_filters_requested_season`、`test_audit_endpoint_season_filter_limits_gaps` 红；前端去掉 onMounted 自动体检 → `auto-audits on open…` 红；均已还原并复跑全绿。
+- 已知限制：分享文件数多时体检要数十秒到数分钟（41 个文件约 2 分钟），下载按钮不受阻塞；40+ 文件的分享请耐心等结论。
