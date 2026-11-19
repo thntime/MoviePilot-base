@@ -143,6 +143,15 @@
 - 回滚点：compose 备份 `docker-compose.yml.bak-20261119-175251`；上一版镜像 digest `0588d0b4` 仍在本地。
 - 部署前对照：旧容器 `has_window=False`，说明新代码确实随镜像生效。
 
+## 季号对齐（2026-11-19 20:30，接窗口识别）
+- 现象（真机 20:25 订阅搜索，斗破苍穹 S05）：5 条候选全部「分享内没有可解析的目标季 S5 集数」，日志显示 `网盘分享内没有目标季 5 的集数`，而分享标题已被改写成 `S05E01-E25`/`S05E150` —— 说明文件解析正常，是季键对不上（分享里只有别的季键）。
+- 真实分享取样（thntime.fun 上用 `POST /api/v1/netdisk/share/preview` + `X-API-KEY`，PanSou 现取）：`斗破苍穹/212.mp4`、`213.mp4` 这类无季号文件本来就走 None 兜底；失效链接与 APK/JPG 包被正常判无效，均不是本次失败形态。
+- 改动 `app/chain/download/batch.py`：`_netdisk_target_season_episodes` 增加 `allow_single_season_fallback`；**只有分享里唯一的季键是 S01** 时按集号对齐到目标季（站点不认识季概念时统一写 S01）。`_inspect_netdisk_season` 增加 `allow_cross_season`，多季整包核对显式关闭对齐，保持严格按季隔离；S02 及以后仍视为真季号。
+- 新增 `tests/test_netdisk_season_fallback.py`：7 条（S01 对齐、S02 不许对齐、多季不对齐、目标季优先、无季号兜底、多季整包关闭对齐、端到端 S05 订阅吃下 S01 标注分享）。
+- 验收：9 个测试文件 **189 passed**（既有断言一条未改，含此前两条严格隔离用例）；pylint **10.00/10**；反向验证把对齐条件临时置假 → 2 failed（对齐单测 + 端到端），还原后 40 passed。
+- 事故记录：中途用 PowerShell `Set-Content` 改 Python 文件把 UTF-8 写成 GBK，`git checkout --` 还原后改用编辑工具重做；后续不再用 shell 改源码。
+
+
 
 
 ## 网盘「只标集数」文件名识别（2026-11-19 18:00）
