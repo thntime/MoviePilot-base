@@ -29,8 +29,25 @@ POSIX 文件模式位断言、GBK 控制台解码。上一轮已证明 `git stas
 
 **请裁决**：继续接受「本机全量套件环境性失败不作为验收项」。
 
-## 已解除
+## 3. 后端子模块里出现不属于本次任务的文件改动（并发写入）
 
+**现象**
+
+`git -C MoviePilot status --porcelain` 除本次改动的 `app/application/subscription/activity.py`、
+`tests/test_subscription_activity.py` 外，还有 4 个文件处于修改状态：
+`app/application/site/mutation.py`、`app/modules/pansou/__init__.py`、`app/modules/pansou/client.py`、
+`tests/test_pansou_module.py`，另有未跟踪目录 `.tmp/`。
+
+**证据**：这 4 个文件的 mtime 是 15:53–15:54，晚于本次任务开工（15:25），
+`git diff --stat` 显示改动集中在 PanSou 模块与站点 mutation，与「订阅活动网盘链接列」无关；
+本次只写了 `activity.py` 与 `tests/test_subscription_activity.py` 两个文件。
+
+**本次影响**：功能与验收不受影响（后端 19 passed、前端 17 passed 均在改动后跑出）。
+但「两子模块改动全在白名单」这条约束按字面无法成立。
+
+**请裁决**：按「本次自身改动 6 个白名单文件」验收，还是等这批并发改动落地后重新核对整树。
+
+## 已解除
 - 前端 vitest 在本机跑不起来：改为**完全访问权限**下执行即可，
   `node node_modules/vitest/vitest.mjs run src/components/dialog/__tests__/AddDownloadDialog.spec.ts`
   24 passed（工作区沙箱下仍会 esbuild EPERM）。

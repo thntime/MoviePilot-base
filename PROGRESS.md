@@ -174,3 +174,61 @@
 - 多季隔离：`test_netdisk_window_keeps_season_isolation` 断言 `S01/140.4K.mp4 + S02/5.mp4` 只认 140。
 - pylint `--jobs=1` 三个文件：**10.00/10**。
 - 端到端：`test_netdisk_full_pack_accepts_episode_only_file_names` 构造 141-179 集只标集数文件，断言 `download_single` 收到 `episodes == set(range(141, 180))`。
+
+## 订阅活动「网盘链接」列（2026-11-20，任务书：网盘链接列）
+### 开工回执（任务 0 之后）
+- 理解的目标：订阅活动详情的「相关资源」表加一列「网盘链接」，CD/PS 资源显示「平台：分享码」并可点开核对，PT 资源显示「—」。
+- 顺序：1 后端明细带平台/分享码/链接 → 2 前端列、类型与三语文案 → 3 反向验证与收口。
+- 最大风险：把 `enclosure` 无条件下写进明细，会踩 `test_subscription_activity.py:129` 的 `private` 断言。
+- 任务 0 核对：后端 16 passed、前端 15 passed；三个环境坑与任务书一致（uv 0.11.21、`CONFIG_DIR`、esbuild `spawn EPERM`）。
+
+### 进度
+- [x] 任务 1 后端：`activity.py` 新增 `_netdisk_share_detail`（只在 `download_type=="netdisk"` 且 `enclosure` 非空时写 `netdisk_platform`/`share_code`/`share_url`），`resource()` 合并进明细；`tests/test_subscription_activity.py` 只新增 3 条用例。后端 **19 passed**（基线 16，老用例与断言一字未改）。
+- [x] 任务 2 前端：`SubscribeActivityDialog.vue` 第 3 列用真 `<a>`（`target=_blank`、`rel=noopener`、`@click.stop`）、空表 `colspan` 4→5、加链接样式与列宽；`api/types.ts` 加 3 个可选字段；三份 locale 加 `netdiskLink`/`openNetdiskLink`；spec 只新增 2 条用例。前端 **17 passed**（基线 15）。
+
+### 证据
+- 后端绿：`pytest tests/test_subscription_activity.py tests/test_subscription_activity_api.py -q` → `19 passed`（exit 0）。
+- 前端绿：`node scripts/run-tests.mjs src/components/dialog/__tests__/SubscribeActivityDialog.spec.ts` → `Tests 17 passed (17)`（exit 0）。
+- 反向验证（后端）：`_netdisk_share_detail` 临时直接 `return {}` → `2 failed, 1 passed`（`assert detail["netdisk_platform"] == "quark"` 与 `"tianyi"` 两条红）；还原 → 19 passed。
+- 反向验证（前端）：`netdiskShareHref` 临时返回空串 → `Unable to find role="link" and name "夸克：d30c5af5d776"`（1 failed / 16 skipped）；还原 → 17 passed。
+- 接口口径：`SubscriptionActivityEvent.model_validate(asdict(snapshot))` 后 `details["resources"][0]` 含 `netdisk_platform=quark`、`share_code=d30c5af5d776`、`share_url=https://pan.quark.cn/s/d30c5af5d776`。
+- 静态检查：`npx eslint`（6 个改动前端文件）exit 0；`npx vue-tsc --noEmit` exit 0；`pylint --jobs=1 app/application/subscription/activity.py` exit 0（仅 pylint 缓存目录告警）。
+- 跳过检查：两测试文件 `\.(skip|todo|only)\(` 命中 0；未 commit、未 push。
+- 并发提示：`git -C MoviePilot status` 里另有 4 个文件（`app/application/site/mutation.py`、`app/modules/pansou/__init__.py`、`app/modules/pansou/client.py`、`tests/test_pansou_module.py`）在本会话期间被别的进程改动（mtime 15:53–15:54，晚于本任务开工），不是本次改动，我没有触碰。
+- 遗留：白名单外的这 4 个文件 + `MoviePilot/.tmp/`（未跟踪的临时目录，早于本任务）使「子模块改动全在白名单」无法按字面成立；本次自身改动严格是 6 个白名单文件。
+
+### 提交与推送（2026-11-20 16:1x）
+- 后端 `8b80c0ecb feat(netdisk): 订阅活动详情记录网盘分享链接`（只含 `activity.py` + `tests/test_subscription_activity.py`）；远端 v3 期间多了 `5e6ec943f chore(version): 发布 v3.2.8.9`，已 `git merge --no-edit origin/v3` 合并为 `c7c61eaab` 并推送（`5e6ec943f..c7c61eaab`）。
+- 前端 `c3a81ba5 feat(netdisk): 订阅活动详情新增网盘链接列`（6 文件），推送 `7f5438b1..c3a81ba5`。
+- 三份 locale 用 `git apply --cached` 只暂存本次新增的两行，并发改动方新增的 `psAuthFieldsRequired` 一行仍留在工作区未提交；`SiteAddEditDialog` 及其 spec、pansou/site 后端 8 文件同样未提交。
+- 核对：`git ls-remote` 的 v3 与本地 HEAD 一致（后端 `c7c61eaab`、前端 `c3a81ba5`）。
+
+## 站点认证与图标（2026-11-20，任务书：PS 账号密码 + 网盘站点图标）
+### 开工回执（任务 0 之后）
+- 理解的目标：PS 站点能填账号密码登录，连通性测试在服务端开认证时不再误报可用；CD/PS 两个网盘站点的图标自动抓取并显示。
+- 顺序：1 客户端登录与凭据校验 → 2 站点类型校验放宽 ps+auth → 3 前端表单与文案 → 4 图标抓取与魔数校验 → 5 回归与反向验证。
+- 最大风险：`update_icon` 改 mime 会撞上既有断言 `data:image/ico;base64,AAA`（按「认不出仍按 ico」保住）；图标抓取把 HTML 错误页存成坏图（用魔数校验挡住）。
+- 任务 0 核对：`test_pansou_module.py + test_site_kind_auth.py` = 50 passed；`test_db_oper_layer.py` 的 `test_downloadhistory_oper_query_entry_points` 为已知红（`OSError [Errno 22]`），与本次无关。
+
+### 改动
+- `app/modules/pansou/client.py`：加 `username`/`password`、`login()`、`_bearer()`、`_authorized_json()`（401 且配了账号密码就重登一次）、`verify_credentials()`；`search()`/`health()` 的既有错误文案未变。
+- `app/modules/pansou/__init__.py`：`_site_username`/`_site_password` 进客户端指纹；`test_netdisk_site` 在 health 之后按 `auth_enabled` 验凭据，缺凭据返回「PanSou 已开启认证：请填写用户名密码或 Bearer token」。
+- `app/application/site/mutation.py`：`ps` 允许 `{"api","auth"}`；填了用户名即推导 `auth`；`ps`+`auth` 缺用户名或密码在写库前拒绝。
+- `app/chain/site.py`：新增 256KB 上限、魔数表、`__fetch_netdisk_favicon`、`cache_netdisk_icon`；`cache_site_icon` 在无索引器且是 cd/ps 时改走它。
+- `app/db/oper/site.py`：`update_icon` 按 base64 魔数决定 `data:image/<ext>` 前缀，认不出仍按 ico。
+- `app/api/endpoints/site.py`：`site_icon` 在库里没有且是网盘站点时用 `asyncio.to_thread` 补抓一次再查。
+- 前端 `SiteAddEditDialog.vue`：auth 页签对网盘站点放开；PS 按 `authType` 提交账号密码或 token；缺字段提示 `psAuthFieldsRequired`（三份 locale 各加）。
+
+### 验收证据
+- 后端：`test_pansou_module.py test_site_kind_auth.py test_netdisk_site_icon.py test_site_chain_ports.py test_db_oper_layer.py` = **162 passed / 1 failed**，唯一失败是既有的 `test_downloadhistory_oper_query_entry_points`（与本次无关）。基线 146 passed，新增 16 条。
+- 反向验证：删掉 `_NETDISK_FAVICON_SIGNATURES` 里的 ICO 那条 → `test_cache_netdisk_icon_uses_page_link_and_stores_ico` 红（`AssertionError: assert False is True`），还原后 **8 passed**。
+- 真机探针（真实网络、走生产代码路径 `__fetch_netdisk_favicon`）：`http://thntime.fun:3300/` → `favicon.ico`（base64 5716 字符）；`http://thntime.fun:8008/` → `/assets/favicon-CydMcMu4.ico`（base64 20544 字符）；`http://thntime.fun:3303/` 整站 401 抓不到（与任务书「地址填 3300」一致）。
+- 前端：`SiteAddEditDialog.spec.ts` **11 passed**（新增「PS 账号密码提交」「缺密码拦截」两条）；`npx vue-tsc --noEmit` exit 0；`npx eslint` 五个改动文件 exit 0。
+- pylint（`-j 1`）：`app/modules/pansou app/application/site/mutation.py app/chain/site.py app/db/oper/site.py app/api/endpoints/site.py` exit 0，0 条消息。
+
+### 已知事项（未自行处理）
+- 工作区里 `app/application/subscription/activity.py`、`tests/test_subscription_activity.py`、前端 `src/api/types.ts`、`SubscribeActivityDialog.vue` 及其 spec 是上一轮「订阅活动网盘链接」的改动，不是本轮产物，未触碰。
+- 魔数表在 `app/chain/site.py`（校验）与 `app/db/oper/site.py`（mime）各一份：白名单不含共享模块，先各自本地化；后续若放开 `app/foundation/` 可合并。
+- 线上 PS 站点仍指向 `3303`，需把地址改成 `3300`（或任一能返回页面的前端地址）并保存一次，图标才会自动出现；不改也能用账号密码连上，只是没有图标。
+- 追加（2026-11-20 16:10）：并行会话已把 `activity.py` 与 `tests/test_subscription_activity.py` 提交成 `8b80c0ecb`，工作区 `git diff --stat` 现在只剩本轮 8 个白名单文件 + 新增 `tests/test_netdisk_site_icon.py`，前端只剩 5 个白名单文件。
+- 追加：`tests/test_review_download_site_regressions.py::test_f040_concurrent_subtitle_writes_are_isolated` 在干净 HEAD worktree 上同样失败（`first_upload.wait(5)` 超时），属既有环境性红，与本次改动无关；其余 211 条通过。
