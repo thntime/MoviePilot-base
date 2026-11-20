@@ -237,3 +237,35 @@
 - 后端 `9907e427b`（v3 分支，9 文件 +818/-28）、前端 `6fad3c30`（v3 分支，5 文件 +68/-11）、父仓 `c5c0409`（main，两个子模块指针）。
 - 三个仓库推送后 `HEAD == origin` 均已核对；工作区只剩未跟踪的 `.tmp/` 临时目录。
 - 推送前回归：后端 162 passed / 1 已知红，前端 `SiteAddEditDialog.spec.ts` 11 passed，pylint 与 vue-tsc 均 exit 0。
+
+## 网盘搜索只留能打开的分享（2026-11-20 17:2x，任务书：网盘搜索只留能打开的分享）
+### 开工回执（任务 0 之后）
+- 理解的目标：搜索结果与订阅都不再出现「点开是分享已失效」的网盘候选；失效与无法确认的分享一律不进结果，已拉黑的分享连校验都不用跑。
+- 顺序：1 夸克/UC 把分享级失效认全 → 2 候选层丢弃无法确认并查黑名单 → 3 提交推送与部署真机。
+- 最大风险：把「无法判定」一刀切丢弃后，账号掉线或限流时该平台整批搜不到；已用一行 INFO 汇总日志兜底可诊断。
+- 任务 0 核对：`test_netdisk_adapters_quark.py + test_netdisk_adapters_uc.py` = **52 passed**、`test_pansou_module.py + test_cloudsaver_module.py + test_netdisk_search_flow.py` = **113 passed**，与任务书一致；`CONFIG_DIR` 指系统临时目录确实 PermissionError，指工作区内目录正常。
+
+### 进度
+- [x] 任务 1 夸克与 UC：`quark.py` 新增 `_SHARE_INVALID_CODES`（41004/41008/41010/41011/41012/41031）与 `_is_share_invalid_message`，`_classify` 改成「41020→LINK_EXPIRED、分享级码与文案、401/403 兜底」的顺序；`_QuarkHttp._json` 的 404 一律按分享失效上报并带原始 message，403 分支先认 41020 再认分享级码。`uc.py` 补 `41027` 映射与 `UC_SHARE_INVALID_CODES`，`UCHttp._json` 在基类 401/403 兜底前先按业务码判分享失效。
+- [x] 任务 2 候选层：`pansou` 与 `cloudsaver` 的 `_filter_alive_shares` 改为「只保留校验通过的」——无法判定（鉴权/限流/网络/超时/预算内没跑完）与明确失效、命中黑名单的一律丢弃；新增 `_blacklist_hit`（搜索前查 `share_blacklist`）与 `_log_filter_summary`（候选/保留/丢弃失效/无法确认/质量不符/黑名单 一行 INFO）；删掉不再使用的 `_mark_unverified`。
+- [x] 新增 `tests/test_netdisk_share_validity_gate.py`（17 条）：夸克 404+41004、404+41010、404 无 JSON、403+41031（含文案无提示词、只能靠业务码命中的一条）全归 `SHARE_INVALID`；41020 仍 `LINK_EXPIRED`、31001 仍 `AUTH_EXPIRED`；HTTP 200 的 41008/41010/「该分享已失效」按业务码与文案判 `SHARE_INVALID`，「取消下载」不误判；UC 403+41027 与错误码表；两个 module 的候选层分别断言「失效丢弃、无法确认丢弃、黑名单不发起校验」。
+
+### 验收证据
+- 验收 1：`pytest tests/test_netdisk_adapters_quark.py tests/test_netdisk_adapters_uc.py tests/test_netdisk_share_validity_gate.py -q` = **69 passed**（基线 52 + 新增 17）。
+- 验收 2：`pytest tests/test_pansou_module.py tests/test_cloudsaver_module.py tests/test_netdisk_search_flow.py tests/test_netdisk_share_validity_gate.py -q` = **130 passed**（基线 113 + 新增 17）。
+- 反向验证 1：把 `_SHARE_INVALID_CODES` 里的 `41031` 临时删掉 → `test_quark_dead_share_responses_are_share_invalid[403-payload4]` 红（`AUTH_EXPIRED` 而非 `SHARE_INVALID`）；还原 → 17 passed。
+- 反向验证 2：把 `pansou` 里「无法判定也丢弃」临时改成保留 → `test_pansou_filter_drops_dead_and_undecidable` 红（3 条候选留了 2 条）；还原 → 17 passed。
+- 既有用例改写（行为口径变化，断言没有放宽）：`test_pansou_module.py` 的 `test_undecidable_share_kept_as_unverified` → `test_undecidable_share_is_dropped`；`test_cloudsaver_module.py` 的 `test_search_keeps_undecidable_shares_marked_unverified` → `test_search_drops_undecidable_shares`、`test_quark_local_walk_keeps_share_without_account` → `test_quark_local_walk_drops_share_without_account`、`test_search_keeps_candidates_over_check_budget_marked_unverified` → `test_search_drops_candidates_over_check_budget`。另有两条解析类用例（`test_search_parses_merge_response_into_candidates`、`test_search_decodes_utf8_title_without_charset_header`）原来靠「未验证也保留」才拿到候选，补装了本机 walk 替身让它们走真实校验路径，标题断言一字未改。
+- 更宽回归：`test_netdisk_module + test_netdisk_cov_modules + test_netdisk_share_blacklist(_api) + test_netdisk_platform_search_filter + test_torrent_sort_netdisk + test_subscription_activity(_api)` = **182 passed / 1 failed**；唯一失败 `test_netdisk_cov_modules.py::test_cleanup_orphans_edge_branches` 是既有环境性红（`WinError 1314` 符号链接权限），`git stash push -- app` 回 HEAD 后同样失败，已还原。
+- pylint（`--jobs=1`）四个改动文件 **10.00/10**。
+- 事故记录：临时用 PowerShell `Set-Content -Encoding utf8` 改写 `quark.py` 写进了 BOM 并转成 LF，已用 Python 去掉 BOM 并把换行还原为 CRLF（`CRLF=1259/LF=1259`）；后续源码改动只用编辑工具或 Python 脚本。
+
+### 上线记录（2026-11-20 17:34）
+- 后端提交 `b1c6155d1`（v3，7 文件）已推送，`git ls-remote` 与本地 HEAD 一致；CI `Docker Hub Image` run `44710765742` success → Release **v3.2.8.12**（版本提交 `edaadfd37`）；`Pylint Code Quality Check` run `44710765833` success。
+- `Unit Tests` run `44710765785` failure，但同一套 job 在改动前的 `9907e427b`（run `44700895022`）上完全同样失败（Architecture Contract/Ratchet Gate + 分片 1/2/3/5/6），更早的 `c7c61eaab`、`9bb752fda`、`0b2e9edc6`、`8e1c3f570` 亦为 failure，属既有 CI 状态，与本次改动无关。
+- 部署：`/data/movie-pilot` 备份 `docker-compose.yml.bak-20261120-173433` → `docker compose pull`（新镜像 `sha256:badcfbb7`）→ `up -d` 重建 → 26 秒 healthy，`/health/ready=200`；容器内 `quark.py` 有 `_SHARE_INVALID_CODES`、两个 module 有「分享校验：候选」日志、`uc.py` 有 41027，确认新代码随镜像生效。
+- 真机取证（`GET /api/v1/search/title?keyword=完美世界`，23.0s）：候选 60 条全部 netdisk，**size=0 条数 = 0**，带「未验证」标记 0 条（改前 90 条里 29 条 size=0）。
+- 真机日志：`PS 站点 PanSou 分享校验：候选 200，保留 44，丢弃失效 98、无法确认 1、质量不符 57、黑名单 0`；`CD 站点 CloudSaver 分享校验：候选 123，保留 16，丢弃失效 98、无法确认 0、质量不符 9、黑名单 0`。
+- 本地对照（真实网络、改后代码）：`31e7a4304c81`/`c23a6ad78b4c`/`f235f9aef7a9`/`554147893cb2`（404+41004）与 `d8f5c0f8a73e`（200+41008）全部 `code=share_invalid`；反向对照取生产里带大小的活分享 `906c86b9bc22`、`bd6ed9dcb67a` 仍 `OK`，说明 404 兜底没有误杀活分享。
+
+
