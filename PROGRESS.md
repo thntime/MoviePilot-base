@@ -269,3 +269,57 @@
 - 本地对照（真实网络、改后代码）：`31e7a4304c81`/`c23a6ad78b4c`/`f235f9aef7a9`/`554147893cb2`（404+41004）与 `d8f5c0f8a73e`（200+41008）全部 `code=share_invalid`；反向对照取生产里带大小的活分享 `906c86b9bc22`、`bd6ed9dcb67a` 仍 `OK`，说明 404 兜底没有误杀活分享。
 
 
+
+## 影视两道质量门 + 内容审核列表（2026-11-20 23:5x，任务书：两道质量门）
+### 开工回执（任务 0 之后）
+- 理解的目标：搜索阶段补确定性门（纯音频不再进影视结果、花絮/合集/原盘不再误杀、集数四形态），下载后加 AI 内容门（打分 + 抽帧 + 置信度复核），判否进「内容审核」列表由人整理或删除。
+- 顺序：1 搜索门（candidates/resolve/episode/两模块透传）→ 2 下载后内容门（content_verify/download_verify/提示词/workflow 挂点）→ 3 内容审核列表（后端字段与三接口 + 前端菜单页面）→ 收口。
+- 最大风险：candidates.py 一次改判定链会撞既有 112 条断言；花絮进分母与单预告片被当电影是两处必须同时修的根因。
+- 任务 0 核对：112 passed（cloudsaver+pansou+episode_window）、16 passed（transfer 三文件）、9 passed（transactional_transfer_history）、前端 vitest 21 passed、vue-tsc 0，与任务书一致。
+- 图片输入：`run_background_prompt` 无 images 参数，但同类的 `process_message(images=...)` 支持；按任务书降级口径，抽帧用于存证与人工复核，判定走纯文本，代码里保留带图调用分支。
+
+### 进度
+- [x] 任务 1 搜索门：`candidates.py` 重写判定链（五分类 `classify_files`、类型占比 `type_ratio_ok`、标题过滤 `title_block_reason`、集数四形态 `episode_form`、时长/大小 `_too_short`、命名一致性 `_title_conflict`、落盘 `apply_share_detail` 写回 season/episodes/episode_source 与 raw_title）；`resolve.py` 深度 5 + 单分享 3000 文件上限 + `truncated`；`episode.py` 加 `chinese_numerals_to_arabic` 与 `title_episode_numbers`；两个模块把 mtype 透传到 `passes_quality`，`_files` 补 `path`。
+- [x] 任务 2 下载后内容门：新建 `content_verify.py`（打分、抽帧、待处理记录 JSON 存储）与 `download_verify.py`（模型调用、置信度复核、结论缓存）；`System Tasks.yaml` 加 `transfer_content_verify`；`workflow.py` 在 file_items 之后、规划之前调用，判否返回「内容校验不通过：原因」。
+- [x] 任务 3 内容审核列表：`schemas/history.py` 加四个 schema，`api/endpoints/history.py` 加 `GET /history/verify`、`POST /history/verify/accept`、`POST /history/verify/delete`（删除校验路径必须在下载目录内）；前端加菜单「内容审核」（下载管理与媒体整理之间）、路由 `/content-audit`、`src/views/content-audit/` 页面与 spec、三份 locale。
+
+### 验收证据
+- 验收 1：`pytest tests/test_cloudsaver_module.py tests/test_pansou_module.py tests/test_netdisk_episode_window.py tests/test_netdisk_quality_gate.py -q` = **139 passed**（基线 112 + 新增 27）。
+- 验收 2：`pytest tests/test_transfer_episode_fallback.py tests/test_transfer_failure_feedback.py tests/test_transfer_subscribe_rollback.py tests/test_transfer_content_verify.py -q` = **29 passed**（基线 16 + 新增 13）。
+- 验收 3：`pytest tests/test_transfer_verify_list.py tests/test_transactional_transfer_history.py -q` = **17 passed**（基线 9 + 新增 8）。
+- 前端：`npx vitest run src/views/content-audit/__tests__/ContentAuditView.spec.ts` = **4 passed**；`npx vue-tsc --noEmit` 无输出（EXIT=0）。
+- pylint（`--jobs=1`）13 个改动/新增 py 文件 **10.00/10**。
+- 反向验证（门 1）：把 `type_ratio_ok` 的非音乐分支临时改成 `return True` → `test_audio_dominant_mixed_share_is_dropped`、`test_archive_size_dominant_share_is_dropped` 双红；还原后 25 passed。
+- 反向验证（门 2）：把 `_verify_downloaded_content` 的判否分支临时改成 `return None` → `test_rejection_writes_pending_record` 红；还原后 13 passed。
+- 反向验证（列表）：把删除接口的路径校验临时改成 `if False and ...` → `test_delete_rejects_path_outside_download_dirs` 红（DID NOT RAISE）；还原后 8 passed。
+- 基线核对：112 / 16 / 9 / vitest 21 / vue-tsc 0，与任务书一致。
+
+### 已知事项（详见 BLOCKED.md）
+- 改写了一条旧口径用例（`test_single_condition_keeps_candidate` → `test_short_duration_alone_drops_candidate` + 新增保留侧用例）。
+- 抽帧图只做存证与人工复核，未作为多模态输入喂模型（`run_background_prompt` 无 images 参数）。
+- 内容审核列表用独立 JSON 存储，未复用整理历史表（避免与 durable 结算的 src+storage 唯一约束竞争）。
+- 未 commit、未推送、未部署。
+- 补充（门 2 硬指标一）：新增 `test_transfer_workflow_stops_on_reject`，走真实 `TransferChain()._run_transfer_workflow`（只替换候选收集与内容校验），断言判否时返回 False 且 message 含「内容校验不通过」，不进入规划。验收 2 因此为 **30 passed**（基线 16 + 新增 14）。
+- 前端基线核对：`npx vitest run src/utils/__tests__/netdisk.spec.ts` = 21 passed（未被改动影响）。
+
+## 上线记录（2026-11-21 01:25 完成）
+
+### 提交与镜像
+- 后端 `MoviePilot` v3：`b85f534b4` 两道门与内容审核接口 → 三次线上修正 `af5aea68f`（标题声明集数放宽清晰度）、`21d19e52c`（命名冲突纳入分享目录名）、`336e6eccc`（陌生片名要覆盖多数正片）、`6ce72e212`（乱码文件名跳过片名比对）。
+- 前端 `MoviePilot-Frontend` v3：`b58f92d0` 内容审核列表页。
+- 镜像：GitHub Actions `Docker Hub Image` 五次构建全部成功，最终镜像 revision `6ce72e212`，版本 `v3.2.8.17`。
+- 部署：`/data/movie-pilot` `docker compose pull && up -d --force-recreate`，容器 6-7 秒 healthy。
+
+### 线上验证（thntime.fun:3200，admin）
+- 版本：仪表盘显示 v3.2.8.17（需清掉浏览器缓存的 dashboard 快照才会刷新）。
+- 菜单：下载管理 → **内容审核** → 媒体整理，顺序正确；页面空态、顶部「待处理 N 条 / 占用 X」正常。
+- 门 1 实测（搜「凡人修仙传」35 条候选）：音频/FLAC 专辑、txt、epub、apk、压缩包主导、标题与文件名不符全部丢弃；`凡人修仙传 年番4【更200集】` 449.2G 整包放行；结果里音频类 0 条。
+- 门 2 实测：`_verify_downloaded_content` 真实路径跑到「模型不可用，已放行」（独立进程没有组合根，模型调用不可用，正好验证了异常放行）；提示词在容器内渲染成功（1665 字符）。
+- 列表实测：造两条记录，下载目录内点删除 → 文件真的被删、行消失；下载目录外点删除 → 被拒绝、行保留、原文件（936MB）分毫未动。
+- 日志：无 Traceback；`用户未认证，无法使用站点功能` 的爆发源于启动时「站点认证参数未设置」的既有配置状态，与本次改动无关。
+
+### 未能在线上验证的一项
+- 门 2 的「模型判否 + 写待处理记录」没有在真实下载链路上跑过：模型调用需要启动层装配，独立脚本拿不到，只有真实 `do_transfer` 才会触发。单元测试用替身覆盖了该路径（判否拦截、置信度复核、缓存、降级）。要真机验证，下一次有网盘下载完成时看日志里的「内容校验」即可。
+
+### 已知取舍
+- `凡人修仙传 (2025) 4K SDR 高码率 国漫，更200集，纯净版` 仍因标题与文件名不符被丢：该分享多数正片带另一个片名，按 QUALITY_GATES 第 1 章口径属应丢。若认为这是误杀，需要放宽命名冲突规则。
