@@ -232,3 +232,8 @@
 - 线上 PS 站点仍指向 `3303`，需把地址改成 `3300`（或任一能返回页面的前端地址）并保存一次，图标才会自动出现；不改也能用账号密码连上，只是没有图标。
 - 追加（2026-11-20 16:10）：并行会话已把 `activity.py` 与 `tests/test_subscription_activity.py` 提交成 `8b80c0ecb`，工作区 `git diff --stat` 现在只剩本轮 8 个白名单文件 + 新增 `tests/test_netdisk_site_icon.py`，前端只剩 5 个白名单文件。
 - 追加：`tests/test_review_download_site_regressions.py::test_f040_concurrent_subtitle_writes_are_isolated` 在干净 HEAD worktree 上同样失败（`first_upload.wait(5)` 超时），属既有环境性红，与本次改动无关；其余 211 条通过。
+
+### 提交与推送（2026-11-20 16:20）
+- 后端 `9907e427b`（v3 分支，9 文件 +818/-28）、前端 `6fad3c30`（v3 分支，5 文件 +68/-11）、父仓 `c5c0409`（main，两个子模块指针）。
+- 三个仓库推送后 `HEAD == origin` 均已核对；工作区只剩未跟踪的 `.tmp/` 临时目录。
+- 推送前回归：后端 162 passed / 1 已知红，前端 `SiteAddEditDialog.spec.ts` 11 passed，pylint 与 vue-tsc 均 exit 0。
