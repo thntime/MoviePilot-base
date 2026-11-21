@@ -383,3 +383,43 @@
 
 ### 下一个可动的杠杆（未做，等确认）
 `_MAX_ALIVE_CHECKS = 200`：2585 条原始数据里只校验最新 200 条，每条约 1-2 秒网络遍历，全量要几分钟。若要进一步提高命中，可以把「标题/别名是否命中搜索词」作为排序优先级（现在纯按发布时间），让 200 个名额先给像样的候选；不动名额本身。
+
+## PanSou 只搜启用的网盘平台（2026-11-21 10:0x）
+
+### 开工回执（任务 0 之后）
+- 理解的目标：PanSou 搜索请求只带「设定 → 网盘账号 → 平台启用」里的平台，未启用平台不再占用 200 个取链校验名额。
+- 顺序：1 客户端 search 加可选 cloud_types → 2 模块里把启用集合按映射表转成 PanSou 取值 → 3 追加用例与反向验证 → 收口。
+- 最大风险：PanSou 取值口径与项目枚举不同，写错静默返回 0 条且不报错；三个反直觉映射按实测写死并各加一条断言。
+- 任务 0 核对：`tests/test_pansou_module.py tests/test_cloudsaver_module.py tests/test_netdisk_episode_window.py tests/test_netdisk_quality_gate.py` = **144 passed**，与任务书一致。
+
+### 改动（白名单内 3 文件）
+- `app/modules/pansou/client.py`：`search(keyword, cloud_types=None)`，只有非空才把 `cloud_types` 加进查询参数；`verify_credentials` 的探测请求未动。
+- `app/modules/pansou/__init__.py`：新增映射表 `_CLOUD_TYPE_BY_PLATFORM`（quark / uc / pan139→mobile / pan123→123 / pan115→115 / guangya / baidu / xunlei / tianyi）与 `PansouModule._cloud_types()`；调用点改为 `search(keyword, cloud_types=self._cloud_types())`。
+- `tests/test_pansou_module.py`：只追加 9 条用例（含 parametrize 的三条映射），既有断言一字未改。
+
+### 一条自定口径（比任务书多走一步，理由）
+启用集合等于全部平台时也**不发** `cloud_types`：此时过滤是空操作，发出去反而会把 PanSou 里本项目不映射的平台（aliyun、pikpak 等）提前切掉，与「结果不减少 > 快 > 省」冲突；且既有 `test_search_requests_merge_result` 断言的是精确参数表，全部启用时保持请求原样才能不动它。启用集合为空时按领导拍板不发。
+
+### 验收证据
+- 验收：`pytest tests/test_pansou_module.py tests/test_cloudsaver_module.py tests/test_netdisk_episode_window.py tests/test_netdisk_quality_gate.py -q` = **153 passed**（基线 144 + 新增 9；failed 0、error 0、skipped 0）。
+- 反向验证：把 `pan115` 的映射临时改成 `"pan115"` → `1 failed, 2 passed`，`AssertionError: assert 'pan115' == '115'`（`test_cloud_types_use_measured_values_for_pan115_pan123_and_pan139[pan115-115]`）；改回 → `3 passed`，整套 **153 passed**。
+- 架构与棘轮：`tests/test_architecture_dependencies.py tests/test_quality_ratchets.py tests/test_complexity_gate.py tests/test_netdisk_platform_search_filter.py tests/test_netdisk_platform_availability.py` = **163 passed**。
+- 静态检查：pylint（`--jobs=1`）三个改动文件 **10.00/10**；`git diff --check` 无输出；测试文件 `\.(skip|todo|only)\(` 命中 0。
+- 真机只读取证（`docker exec` 进生产容器，读 site id=2 凭据，只发 GET）：
+  - `NetdiskEnabledPlatforms = ["quark", "uc"]`；
+  - 不带 `cloud_types`：`status=200 total=2526 quark=887 uc=72`；
+  - 带 `cloud_types=quark,uc`：`status=200 total=959 quark=887 uc=72` —— 总数降 62%，夸克/UC 一条不少（887+72=959 全保留）。
+  - 与任务书 09:0x 实测的 2585→983 同比例，索引随时间小幅变化。
+- 任务书阶段：不 commit、不推送、不部署（任务 1 验收完成时改动只在工作区）。
+
+### 上线记录（2026-11-21 10:58，领导指令「上线」后执行）
+- 后端提交 `e75993fdd`（v3 分支，3 文件 +170/-6）已推送（`fa07ca1e6..e75993fdd`）；CI `Docker Hub Image` run `44858390781` success（3m49s），版本提交 `b1590e19b` → **v3.2.8.20**。
+- 部署：`/data/movie-pilot` 备份 `docker-compose.yml.bak-20261121-105857` → `docker compose pull` → `up -d --force-recreate`，第 7 次轮询（约 21 秒）healthy；镜像 revision `e75993fdd`、容器内 `APP_VERSION = 'v3.2.8.20'`、`FRONTEND_VERSION = 'v3.2.8.20'`、`health/ready=200`、`web=200`。
+- 容器内代码核对：`client.py:254` 的 `search(self, keyword, cloud_types=None)`、`client.py:266` 的 `params["cloud_types"]`、`__init__.py:159` 的 `_cloud_types()`、`__init__.py:695` 的调用点均在镜像里。
+- 真机参数取证（生产镜像内跑真实链路，只把 HTTP 层换成打印参数的替身，不发真实请求）：
+  - `DB 里的 NetdiskEnabledPlatforms = ['quark', 'uc']`
+  - `模块算出的 cloud_types = quark,uc`
+  - `实际查询参数 = {'kw': '凡人修仙传', 'res': 'merge', 'src': 'all', 'cloud_types': 'quark,uc'}`
+- 真机服务端取证（同一凭据直连 PanSou）：不带 `cloud_types` 返回 2526 条，带 `cloud_types=quark,uc` 返回 959 条，夸克 887 + UC 72 全保留。
+- 回滚点：compose 备份 `docker-compose.yml.bak-20261121-105857`；上一版镜像 revision `3f62193d9`（v3.2.8.19）仍在本地。
+- 待生产自查：搜「凡人修仙传」看结果条数与日志「PS 站点 PanSou 分享校验：候选 200，保留 N」里的 N（改造前为 40）。
