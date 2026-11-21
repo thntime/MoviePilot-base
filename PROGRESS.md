@@ -525,4 +525,27 @@
 - 容器内核对：`download.py:150/170` 的别名与同名版本函数、`download.py:294` 的干净标题广搜、`download.py:305` 的候选响应均在；`schemas/download.py:43/73` 的候选模型与字段均在。
 - 前端产物：`alternative-version-dialog` 在 `AddDownloadDialog` 分块中，「同名多个版本」文案在 `main-xc5EAjr8.js` 中。
 - 健康：`/health/ready=200`（3201）、`web=200`（3200），启动日志 `Traceback|CRITICAL|ImportError` 计数 0。
-- 未 commit、未推送、未部署（按任务书）。
+
+## 内容审核表格风格统一与 PanSou 图标修复（2026-11-22 00:1x，v3.2.8.24）
+
+### 风格规范
+- 先只读核对 `styles/common.scss`、`@core/scss/_components.scss`、`TransferHistoryView.vue` 与设置页卡片表格，整理为 OpenViking 资源 `viking://resources/projects/moviepilot/frontend-style-guide.md`。
+- 要点：统一 surface/token、大圆角卡片、轻边框与平阴影；表格放在卡片容器内；分页采用「胶囊每页条数下拉 + 范围信息 + 右侧页码」，不再用 chip 充当分页控件。
+
+### 表格与分页改动
+- `ContentAuditView.vue`：表格移入 `VCard`，使用默认行高、12–16px 单元格留白、垂直居中、表头与分隔线 token、轻 hover；长原因两行截断并保留 title，路径截断；小屏横向滚动。
+- 分页改为 `VSelect` 胶囊下拉（25/50/100）+「第 x–y 条 / 共 N 条」+ `VPagination show-first-last-page total-visible=7`，与媒体整理页一致。
+- 三份 locale 增加 `contentAudit.pageInfo`。
+- 验收：`ContentAuditView.spec.ts` **9 passed**；`vue-tsc --noEmit` 与 `eslint` 改动文件退出 0。
+
+### PanSou 图标根因与修复
+- 生产实测：`http://thntime.fun:3303/` 与 `/favicon.ico` 未认证均 401；带 Bearer 后均 404，说明 3303 是纯 API，不托管网页与图标。
+- `http://thntime.fun:3300/` 返回 HTML，`/favicon.ico` 返回真实 ICO；且 `3300/api/health` 与 `3300/api/search` 均 200，证明 3300 是网页入口并同时代理 API。
+- 通过站点编辑 UI 把 PanSou 地址从 3303 改为 **3300**；随后日志出现「缓存站点 PanSou 图标成功」，`siteicon` 表已写入真实图标。
+- 第二层问题：浏览器继续复用旧「图标不存在」响应（重复旧 `X-Request-Id`，新请求未进后端日志）。`SiteCard.vue` 的图标请求增加 `_ts=Date.now()` 缓存破坏参数；保留 `getCachedSiteIcon` 的 10 分钟内存缓存。
+- 验收：`SiteCard.spec.ts` **17 passed**（新增缓存破坏参数用例）；生产站点页实测 PanSou 卡片 `img.src` 为 `data:image/ico;base64,...`，默认地球图标已消失。
+
+### 上线记录
+- 前端 `9ba99eb1`（7 文件 +249/-127）已推 v3；CI `Docker Hub Image` run `44922466655`（workflow_dispatch）success（4m58s），版本提交 `a775232a2` → **v3.2.8.24**。
+- 部署：备份 compose → pull → `up -d --force-recreate`，第 7 次轮询 healthy；容器内 `APP_VERSION = 'v3.2.8.24'`、`FRONTEND_VERSION = 'v3.2.8.24'`。
+- 生产浏览器实测：内容审核表格卡片、范围信息与胶囊分页正常；PanSou 真实 favicon 正常显示。
