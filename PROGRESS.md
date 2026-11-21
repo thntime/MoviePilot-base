@@ -423,3 +423,40 @@
 - 真机服务端取证（同一凭据直连 PanSou）：不带 `cloud_types` 返回 2526 条，带 `cloud_types=quark,uc` 返回 959 条，夸克 887 + UC 72 全保留。
 - 回滚点：compose 备份 `docker-compose.yml.bak-20261121-105857`；上一版镜像 revision `3f62193d9`（v3.2.8.19）仍在本地。
 - 待生产自查：搜「凡人修仙传」看结果条数与日志「PS 站点 PanSou 分享校验：候选 200，保留 N」里的 N（改造前为 40）。
+
+## PS 全量校验 + 审核留痕 + 菜单图标（2026-11-21 11:35 上线，v3.2.8.21）
+
+### 用户三点要求
+1. PS 站点所有返回都参与校验，不再限制 200 条；用多线程压住耗时，线程数上限 200。
+2. 订阅下载的「光阴之外」在内容审核列表里看不到——流程应为「订阅-下载-审核-整理」，必须每条都留痕。
+3. 内容审核菜单没有图标。
+
+### 排查结论（第 2 点）
+- 生产库 `transferhistory` 里「光阴之外 S01E49」在 **10:44:53、10:45:42** 两次整理成功（v3.2.8.19），`contentverify` 表里只有 00:50 造的两条探针记录。
+- 根因：`download_verify` 只在**判否**时写记录，判通过只打一行日志。光阴之外文件名 `S01E49.2025.2160p.WEB-DL...` 与目标作品一致，走的是「通过」分支，所以列表里什么都没有。不是没走审核，是通过的不留痕。
+- 第 3 点根因：菜单图标写的是 `mdi-shield-search-outline`，**MDI 图标集里只有 `shield-search`**；`build-icons.js` 扫描源码收集图标时找不到这个名字就静默跳过，产物里没有该图标，于是菜单空白。
+
+### 改动
+- `app/modules/pansou/__init__.py`：删掉 `_MAX_ALIVE_CHECKS`，候选全量校验；`_ALIVE_WORKERS` 16 → **200**；`_ALIVE_BUDGET_SECONDS` 30 → **180**；汇总日志加「耗时 X.Xs（200 并发）」。
+- `app/application/netdisk/download_verify.py`：新增 `record_verification(decision=...)` 与 `record_for_result`（判否→`reject`、真判定通过→`pass`、没真正判定→`skipped`），`record_rejection` 保留为旧入口。
+- `app/chain/transfer/workflow.py`：`_verify_downloaded_content` 每次审核都调 `record_for_result`，通过也留痕。
+- `app/application/netdisk/content_verify.py` 加 `DECISION_SKIPPED`/`DECISION_VALUES`；`app/db/adapters/contentverify.py` 的 `list(None)` 改为返回全部状态（原为只返回待处理）。
+- `app/api/endpoints/history.py`：`GET /history/verify` 加 `status` 参数（all/reject/pass/skipped/manual/deleted，未知值 400），响应加 `counts`；`pending_size` 只统计待处理。
+- `app/schemas/history.py`：`ContentVerifyPage` 加 `counts`。
+- 前端：`ContentAuditView.vue` 加「结论」列（chip）、状态筛选 chip（带各状态计数）、只有待处理行显示整理/删除；三份 locale 加 9 个键；`src/router/i18n-menu.ts` 图标改 `mdi-shield-search` 并重新生成 `icons-bundle`。
+
+### 验收
+- PS：`tests/test_pansou_module.py tests/test_cloudsaver_module.py tests/test_netdisk_episode_window.py tests/test_netdisk_quality_gate.py` = **154 passed**（新增 1 条「250 条候选全部校验」）。
+- 反向验证：临时把候选截回 `[:200]` → `AssertionError: assert 200 == 250`；改回 → 154 passed。
+- 审核：`tests/test_transfer_content_verify.py tests/test_transfer_verify_list.py tests/test_content_verify_repository.py tests/test_content_verify_migration.py tests/test_transfer_episode_fallback.py tests/test_transfer_failure_feedback.py tests/test_transfer_subscribe_rollback.py tests/test_transactional_transfer_history.py` = **61 passed**（新增 `record_for_result` 三态映射、通过也留痕、按状态筛选、未知状态 400）。
+- 架构与棘轮：`tests/test_architecture_dependencies.py tests/test_architecture_adapter_imports.py tests/test_quality_ratchets.py tests/test_complexity_gate.py` = **161 passed**。
+- 前端：`ContentAuditView.spec.ts` **6 passed**；`vue-tsc --noEmit` 与 `eslint`（8 个改动文件）exit 0。
+- pylint（`--jobs=1`）11 个改动文件 **10.00/10**。
+- 事故记录：用 PowerShell `Set-Content` 改 `tests/test_transfer_verify_list.py` 又写进了 BOM 并把中文写成乱码，已 `git checkout --` 还原后用编辑工具重做；源码改动不再用 shell。
+
+### 上线记录（11:35）
+- 后端 `e59c89627`（PS 全量+200 并发）、`cb87e9af4`（审核留痕+状态筛选）已推 v3；前端 `dd9de846` 已推 v3。
+- CI `Docker Hub Image` run `44861554059` success（5m58s），版本提交 `b0a70ea24` → **v3.2.8.21**。
+- 部署：备份 `docker-compose.yml.bak-20261121-113xxx` → pull → `up -d --force-recreate`，第 7 次轮询 healthy；镜像 revision `cb87e9af4`、`APP_VERSION = 'v3.2.8.21'`、`health/ready=200`、`web=200`。
+- 容器内核对：`_ALIVE_WORKERS = 200`、`_ALIVE_BUDGET_SECONDS = 180`、无 `_MAX_ALIVE_CHECKS`；`workflow.py:404` 调 `record_for_result`；`/api/v1/history/verify` 未登录 401（路由在）。
+- 前端产物核对（`/app/frontend-src/dist`）：`shield-search` 在 `main-*.js` 与 `icons-bundle-*.js` 里，旧名 `shield-search-outline` 已消失；「已通过」「未判定」「待处理」文案都在。
