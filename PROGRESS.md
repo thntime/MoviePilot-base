@@ -352,3 +352,34 @@
 
 ### 合计回归
 `pytest tests/test_cloudsaver_module.py tests/test_pansou_module.py tests/test_netdisk_episode_window.py tests/test_netdisk_quality_gate.py tests/test_transfer_episode_fallback.py tests/test_transfer_failure_feedback.py tests/test_transfer_subscribe_rollback.py tests/test_transfer_content_verify.py tests/test_transfer_verify_list.py tests/test_content_verify_repository.py tests/test_transactional_transfer_history.py` = 198 passed。
+
+## 搜索结果骤减排查与修复（2026-11-21 09:25 上线）
+
+### 用户反馈
+搜「凡人修仙传」只出 1 个资源，预期应该很多。
+
+### 实测漏斗（修复前，09:04 那次搜索）
+- **PanSou 原始返回 2585 条，其中夸克 910 条**（去重标题 351 个）；另有百度 742、磁力 391、迅雷 189 等。
+- MoviePilot 只对**最新 200 条**做取链校验（`app/modules/pansou/__init__.py::_MAX_ALIVE_CHECKS = 200`），其余 2385 条根本不进判定。
+- 200 条里：失效 106、质量不符 67、保留 27。
+- CloudSaver 侧：候选 200，保留 1（失效 195）。
+- 28 个候选进匹配层，**27 条被判「媒体身份不匹配」**，最后只剩 1 条。
+
+### 根因
+「质量不符 67」里有约 20 条是**真的凡人修仙传**，全被我加的「标题与文件名指向不同作品」规则杀掉。实际文件树：
+- `【凡人修仙传 剧版】全集 30集 完结` → 文件是 `凡丨人修丨X传 剧版/01.mp4`（上传者插分隔符 + 换字规避网盘审核）；
+- `凡人修仙传 年番4` → 文件全在乱码目录 `F饭絍髹燹篆/` 下（NFO 元数据目录）。
+
+按文件名反推片名在这种规避命名下必然误判，而作品身份本来就由匹配层按别名比对，这层规则纯属重复且有害。
+
+### 修复
+`_title_conflict` 从「丢弃」降级为「只标记」：命中时给候选打 `标题与文件名不符` 标记并记日志，不再拦。`test_title_name_conflict_is_dropped` 改为 `test_title_name_conflict_is_flagged_not_dropped`。
+
+### 修复后（09:25 实测）
+- PanSou：候选 200 → 保留 40（质量不符 54、失效 106）。
+- UI：**43 个资源**（修复前 1 个），凡人修仙传年番4／剧版／纯净版／真人版／慕兰之战／官方重制版都在列表里。
+- 剩余丢弃基本合理：txt/epub/mobi/pdf 小说、apk、FLAC 专辑、以及「正片 0MB」的空目录分享。
+- 验收：`tests/test_netdisk_quality_gate.py tests/test_cloudsaver_module.py tests/test_pansou_module.py tests/test_netdisk_episode_window.py` = 144 passed；pylint 10.00/10。
+
+### 下一个可动的杠杆（未做，等确认）
+`_MAX_ALIVE_CHECKS = 200`：2585 条原始数据里只校验最新 200 条，每条约 1-2 秒网络遍历，全量要几分钟。若要进一步提高命中，可以把「标题/别名是否命中搜索词」作为排序优先级（现在纯按发布时间），让 200 个名额先给像样的候选；不动名额本身。
