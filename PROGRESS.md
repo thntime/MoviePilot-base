@@ -323,3 +323,32 @@
 
 ### 已知取舍
 - `凡人修仙传 (2025) 4K SDR 高码率 国漫，更200集，纯净版` 仍因标题与文件名不符被丢：该分享多数正片带另一个片名，按 QUALITY_GATES 第 1 章口径属应丢。若认为这是误杀，需要放宽命名冲突规则。
+
+## 领导裁决后的三项调整（2026-11-21 08:55 上线）
+
+后端提交 `526f38ceb`（rebase 后），镜像 v3.2.8.18，已部署并验证。
+
+### 1. 短剧判定回到双条件
+- `candidates.py::_too_short` 改回「平均单集时长与平均单集大小同时低于阈值」，删掉 `_LONG_FEATURE_SECONDS`、`_SUSPECT_AUDIO_BOOK_EPISODES` 与 `statistics` 依赖。
+- `tests/test_cloudsaver_module.py::test_single_condition_keeps_candidate` 恢复原样；`test_netdisk_quality_gate.py` 的两条单条件用例改为断言保留，另加 `test_short_drama_with_small_size_is_dropped` 覆盖双条件成立。
+- 验收：`tests/test_cloudsaver_module.py tests/test_pansou_module.py tests/test_netdisk_episode_window.py tests/test_netdisk_quality_gate.py` = 144 passed。
+
+### 2. 抽帧图喂模型
+- `frame_policy` 只剩 `skip`/`frames`：名字证据不足 5 分就抽帧。
+- 截图经 `_frame_images` 转 data URI → `process_message(images=...)` → 编排层 `image_url` 块；System Task 增加截图数量与「画面优先于文件名」判据。
+- 验收：`tests/test_transfer_content_verify.py` = 16 passed（含 `test_frames_are_sent_to_model`、`test_prompt_reports_attached_frames`）。
+
+### 3. 内容审核改存数据库
+- 新表 `contentverify` + 迁移 `c9e5a1f7b3d2_3_2_8_18`；模型/Oper/适配器三层新增，应用层只依赖 `ContentVerifyRepository` 端口，组合根在 `configure_netdisk_composition` 注入，JSON 存储删除。
+- 验收：`tests/test_content_verify_repository.py` = 5 passed、`tests/test_content_verify_migration.py` = 3 passed、`tests/test_transfer_verify_list.py` = 8 passed。
+- 架构与棘轮：`tests/test_architecture_dependencies.py tests/test_architecture_adapter_imports.py tests/test_quality_ratchets.py tests/test_complexity_gate.py` = 161 passed。
+- pylint（`--jobs=1`）16 个改动/新增 py 文件 10.00/10。
+
+### 线上验证（thntime.fun:3200）
+- 迁移：容器启动后 `alembic_version = c9e5a1f7b3d2`，`contentverify` 表 21 列存在。
+- 列表：经真实适配器写入两条记录，页面正常展示（待处理 2 条 / 占用 893 MB，媒体、结论、证据、文件、路径、操作齐备）。
+- 删除守卫：下载目录内的记录点删除 → 文件真的删除、状态转 `deleted`、行消失；下载目录外的点删除 → 被拒、文件 936MB 未动、状态仍 `reject`。
+- 门 1：搜「凡人修仙传」仍丢 FLAC 专辑、apk、压缩包主导的分享，结果里音频类 0 条；容器日志无 Traceback。
+
+### 合计回归
+`pytest tests/test_cloudsaver_module.py tests/test_pansou_module.py tests/test_netdisk_episode_window.py tests/test_netdisk_quality_gate.py tests/test_transfer_episode_fallback.py tests/test_transfer_failure_feedback.py tests/test_transfer_subscribe_rollback.py tests/test_transfer_content_verify.py tests/test_transfer_verify_list.py tests/test_content_verify_repository.py tests/test_transactional_transfer_history.py` = 198 passed。
