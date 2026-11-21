@@ -492,4 +492,37 @@
 - 前端产物核对（`/app/frontend-src/dist`）：`每页`/`共`/`该状态下没有记录` 文案在 `main-DB2wIHAH.js`；`audit-size-`（每页条数 testid）在 `ContentAuditView-CeAIFYPk.js` 分块里；`v-pagination` 在 bundle 与 CSS 中。
 - 路由与健康：`/health/ready=200`（3201）、`web=200`（3200 nginx）、`/api/v1/history/verify` 未登录 401（路由在）；启动日志 `Traceback|CRITICAL|ImportError` 计数 0。
 - 说明：deploy 脚本里 `health/ready=200` 实际打到了 80 端口（`docker port` 在 host 网络模式下取不到映射端口，变量为空后 curl 回落默认端口）；真实核对以 3201/3200 为准，两个都是 200。
+
+## 同名多版本下载错整理（2026-11-21 23:2x）
+
+### 用户反馈与取证
+- 搜索「凡人修仙传（动漫）」点下载，整理后成了真人版；斗破苍穹也出现过。
+- 生产库：`downloadhistory id=284`（10:10）落库身份为 `凡人修仙传 (2025) media_id=243224`，目录 `国产剧/`；对照 `id=286`（11:26）为动漫 `(2020) media_id=106449`，目录 `动漫/国漫/`。说明身份在下载提交时已错，不是整理阶段才错。
+- 根因链路：按标题模糊搜索的 Context 不带 `media_info` → 下载对话框走 `download/add` → 没带 `media_source/media_id` 时后端 `recognize_by_meta` 按标题重新识别 → 同名多版本静默取排序第一，下载与整理全程继承错误身份。
+- 订阅链路全程携带订阅绑定的 `mediainfo` 做搜索、下载与整理，不受此问题影响。
+
+### 修复
+- 后端 `app/api/endpoints/download.py`：无身份下载识别成功后，用识别结果的干净标题做一次广搜；同名（含英文名/原名/别名）但媒体身份不同的版本 ≥2 时，不创建任务，返回 `requires_confirmation=true` 与 `data.alternatives` 候选版本。显式身份复提、单版本、`allow_unrecognized=true`、音乐下载保持旧行为。
+- `app/schemas/download.py`：新增 `DownloadMediaAlternative`，`DownloadAddedData` 加 `alternatives`。
+- 前端 `AddDownloadDialog.vue`：收到同名版本候选时弹出版本选择层（标题/年份/类型），选定后带 `media_source/media_id` 复提；取消则不下单。未识别确认框逻辑不变。三份 locale 加 3 个键。
+- 文档：`skills/moviepilot-api/api/download.md` 补充 `download.add` 的同名版本响应与复提契约。
+- 新增 `tests/test_download_ambiguous_title.py` 8 条：凡人修仙传双版本拦截、选定身份复提、单版本放行、衍生作不误拦、显式确认放行、识别失败旧流程、音乐跳过、英文原名同名版本拦截。
+
+### 验收
+- 后端：`pytest tests/test_download_ambiguous_title.py tests/test_download_site_credentials.py tests/test_workflow_add_download.py tests/test_download_media_source.py tests/test_download_identity.py tests/test_resource_download.py tests/test_music_download.py tests/test_api_docs_routes.py -q` = **116 passed**。
+- 前端：`node scripts/run-tests.mjs src/components/dialog/__tests__/AddDownloadDialog.spec.ts` = **26 passed**（新增同名版本选择与取消两条）；`vue-tsc --noEmit` 与 `eslint` 改动文件均退出 0。
+- pylint（`--jobs=1`）3 个后端改动/新增 py 文件 **10.00/10**。
+- 真实 TMDB 只读探针（生产容器直连，未提交下载）：
+  - `凡人修仙传` 广搜返回 5 条，含同名 `2020 id=106449` 与 `2025 id=243224`；
+  - `斗破苍穹` 广搜返回 12 条，含同名英文 `Fights Break Sphere (2017) id=79481` 与 `(2018) id=81500`；识别结果的 `en_title=Fights Break Sphere` 可命中这两条。
+- 探针过程中修正两处实现：广搜必须使用识别后的干净标题（`metainfo.name` 残留「年番」会把搜索收窄为 0 条）；同名比较必须纳入英文名/原名，否则斗破苍穹的英文候选漏判。
+- 既有无关失败：`test_service_operation_skills.py::test_copied_downloader_reports_missing_runtime_root`（既有环境性红）与 `test_builtin_skill_boundaries.py::test_api_and_database_skills_declare_final_boundaries`（此前 contentverify 表文档边界缺失，本次未触碰该文件）；其余 47 条通过。
+
+### 上线记录（2026-11-21 23:2x）
+- 后端 `f68583442`（同名多版本下载前要求选择媒体身份，4 文件 +337/-1）、前端 `9c45c244`（同名版本选择器，5 文件 +193/-10）已推 v3。
+- CI `Docker Hub Image` run `44918714610` success（5m13s），版本提交 `55ece05ab` → **v3.2.8.23**。
+- 部署：`/data/movie-pilot` 备份 compose → pull → `up -d --force-recreate`，第 7 次轮询 healthy；镜像 revision `f68583442`、容器内 `APP_VERSION = 'v3.2.8.23'`、`FRONTEND_VERSION = 'v3.2.8.23'`。
+- 容器内核对：`download.py:150/170` 的别名与同名版本函数、`download.py:294` 的干净标题广搜、`download.py:305` 的候选响应均在；`schemas/download.py:43/73` 的候选模型与字段均在。
+- 前端产物：`alternative-version-dialog` 在 `AddDownloadDialog` 分块中，「同名多个版本」文案在 `main-xc5EAjr8.js` 中。
+- 健康：`/health/ready=200`（3201）、`web=200`（3200），启动日志 `Traceback|CRITICAL|ImportError` 计数 0。
 - 未 commit、未推送、未部署（按任务书）。
