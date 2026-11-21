@@ -460,3 +460,36 @@
 - 部署：备份 `docker-compose.yml.bak-20261121-113xxx` → pull → `up -d --force-recreate`，第 7 次轮询 healthy；镜像 revision `cb87e9af4`、`APP_VERSION = 'v3.2.8.21'`、`health/ready=200`、`web=200`。
 - 容器内核对：`_ALIVE_WORKERS = 200`、`_ALIVE_BUDGET_SECONDS = 180`、无 `_MAX_ALIVE_CHECKS`；`workflow.py:404` 调 `record_for_result`；`/api/v1/history/verify` 未登录 401（路由在）。
 - 前端产物核对（`/app/frontend-src/dist`）：`shield-search` 在 `main-*.js` 与 `icons-bundle-*.js` 里，旧名 `shield-search-outline` 已消失；「已通过」「未判定」「待处理」文案都在。
+
+## 内容审核表格优化（2026-11-21 14:2x，任务书：内容审查的表格优化）
+
+### 开工回执（任务 0 之后）
+- 理解的目标：内容审核表格从「一次性取 200 条」改成服务端分页 + 时间列 + 分母来自接口，让记录变多后仍能翻查。
+- 顺序：1 后端补 `score_total` → 2 前端表格重做（分页/时间列/分母/统计/空态）→ 3 反向验证与收口。
+- 最大风险：改表格结构会撞既有 6 条前端断言（空态文案、行内容），按任务书「行为断言可随界面改写、用例总数不许低于基线」处理。
+- 任务 0 核对：后端 `tests/test_transfer_verify_list.py` = **10 passed**；前端 `node scripts/run-tests.mjs src/views/content-audit/__tests__/ContentAuditView.spec.ts` = **6 passed**；与任务书一致。
+
+### 进度
+- [x] 任务 1 后端给满分：`ContentVerifyPage` 加 `score_total`，`GET /history/verify` 返回 `int(SCORE_TOTAL)`；`content_verify.py` 那行「N/12」注释改成「N/满分（当前口径 11）」。`tests/test_transfer_verify_list.py` **10 → 11 passed**（新增 `test_list_reports_score_total` 断言 `score_total == 11` 且等于常量）。
+- [x] 任务 2 表格重做：列改成 时间/媒体/结论/校验结论/证据/文件/路径/操作；表格外套滚动容器 + 表头 sticky + 行 hover；底部 `VPagination` + 每页 25/50/100 切换；翻页与改每页条数都按 `page/count/status` 重新请求；分数显示 `N / scoreTotal`（接口给）；顶部统计多一个「共 N 条」；空态按筛选状态换文案；小屏横向滚动（`min-width: 960px`）。三份 locale 各加 6 个键（time/totalCount/perPage/pagination/emptyFilteredTitle/emptyFilteredDescription）。
+- [x] 前端用例 6 → **9 passed**：新增「时间列渲染 created_at + 分母取接口」「切到第 2 页发 page=2」「每页改 50 发 count=50」「筛选无结果时显示该状态空态」；原有 6 条按新界面改写断言，条数不减。
+
+### 验收证据
+- 后端：`pytest tests/test_transfer_verify_list.py -q` = **11 passed**（基线 10），skipped 0。
+- 前端：`node scripts/run-tests.mjs src/views/content-audit/__tests__/ContentAuditView.spec.ts` = **9 passed**（基线 6）。
+- 静态检查：`npx vue-tsc --noEmit` 退出 0；`npx eslint`（6 个改动文件）退出 0；pylint（`--jobs=1`，4 个后端改动文件）**10.00/10**。
+- 反向验证 1（每页条数）：把 `fetchData` 的 `count: pageSize.value` 临时改成 `count: 200` → `Tests 1 failed | 8 passed`，失败点是 spec:163 断言 `count=50`（`expected false to be true`）；还原 → **9 passed**。
+- 反向验证 2（分母）：把 `{{ item.score }} / {{ scoreTotal }}` 临时改成 `/ 12` → `Tests 1 failed | 8 passed`，失败点是 spec:84 `toHaveTextContent('3 / 11')`；还原 → **9 passed**。
+
+### 白名单外的必要改动（已记 BLOCKED.md）
+- `MoviePilot-Frontend/src/api/types.ts` 加一行 `score_total: number`：任务书白名单漏了这个文件，不加则 `vue-tsc` 报 `Property 'score_total' does not exist on type 'ContentVerifyPage'`，验收里的 typecheck 过不去。已按「必须加的写 BLOCKED.md」处理。
+
+### 上线记录（2026-11-21 22:2x，领导指令「上线」后执行）
+- 后端 `c0f4adabb`（内容审核列表返回证据满分，4 文件 +16/-1）、前端 `8db9515f`（表格分页/时间列/分母来自接口，6 文件 +287/-88）已推 v3。
+- CI `Docker Hub Image` run `44913674908` success（5m28s），版本提交 `54c9cb78c` → **v3.2.8.22**。
+- 部署：`/data/movie-pilot` 备份 compose → pull → `up -d --force-recreate`，第 8 次轮询（约 24 秒）healthy；镜像 revision `c0f4adabb`、容器内 `APP_VERSION = 'v3.2.8.22'`、`FRONTEND_VERSION = 'v3.2.8.22'`。
+- 容器内核对：`app/schemas/history.py:351` 有 `score_total` 字段、`endpoints/history.py:761` 返回 `int(SCORE_TOTAL)`、`content_verify.py:47` 注释已是「N/满分（当前口径 11）」。
+- 前端产物核对（`/app/frontend-src/dist`）：`每页`/`共`/`该状态下没有记录` 文案在 `main-DB2wIHAH.js`；`audit-size-`（每页条数 testid）在 `ContentAuditView-CeAIFYPk.js` 分块里；`v-pagination` 在 bundle 与 CSS 中。
+- 路由与健康：`/health/ready=200`（3201）、`web=200`（3200 nginx）、`/api/v1/history/verify` 未登录 401（路由在）；启动日志 `Traceback|CRITICAL|ImportError` 计数 0。
+- 说明：deploy 脚本里 `health/ready=200` 实际打到了 80 端口（`docker port` 在 host 网络模式下取不到映射端口，变量为空后 curl 回落默认端口）；真实核对以 3201/3200 为准，两个都是 200。
+- 未 commit、未推送、未部署（按任务书）。
