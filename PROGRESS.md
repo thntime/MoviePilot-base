@@ -549,3 +549,37 @@
 - 前端 `9ba99eb1`（7 文件 +249/-127）已推 v3；CI `Docker Hub Image` run `44922466655`（workflow_dispatch）success（4m58s），版本提交 `a775232a2` → **v3.2.8.24**。
 - 部署：备份 compose → pull → `up -d --force-recreate`，第 7 次轮询 healthy；容器内 `APP_VERSION = 'v3.2.8.24'`、`FRONTEND_VERSION = 'v3.2.8.24'`。
 - 生产浏览器实测：内容审核表格卡片、范围信息与胶囊分页正常；PanSou 真实 favicon 正常显示。
+
+## 分享「没有目标集」24 小时记忆 + 订阅 23 记账修复（2026-11-23 09:45，任务书：黑名单 24 小时）
+
+### 开工回执（任务 0 之后）
+- 理解的目标：选源阶段判定「分享内没有目标集」时把该分享写进分享黑名单 24 小时，下一轮搜索直接跳过；同一轮只读一次分享目录；清掉订阅 23 虚高的 note，让缺集回到 E168-E200。
+- 顺序：1 黑名单写入 + walk 复用（含测试）→ 2 架构门禁与 pylint → 3 提交推 v3、等镜像、部署 → 4 清 note 并等一轮验证。
+- 最大风险：黑名单是全局的，粒度写错会让别的订阅也跳同一条分享 24 小时；按领导拍板接受，24 小时后自恢复。
+- 任务 0 核对：`test_netdisk_share_blacklist + test_download_batch_phases + test_netdisk_failure_reconcile` = **75 passed**；生产黑名单 **1 条**（`baidu:rkL7DHZg5zixONZiyaxXlA`，2026-11-24T08:14Z 过期）；`moviepilot.log` 里「分享内没有目标集」**5 条**。三条全部对上。
+
+### 任务 1 改动（代码 + 测试）
+- `app/chain/download/batch.py`：新增 `_share_key`、`_netdisk_share_files`（按分享缓存目录清单，整季与拆包阶段只真读一次）、`_no_target_reason`（原因带实测/目标集数）、`_record_share_skip`、`_flush_share_blacklist`、`_write_share_blacklist`；两个判定点（`_episode_pack_candidate` 的「分享内没有目标集数」、`_submit_partial_pack` 的「分享内没有需要的集数」）记下分享，`run()` 结束时统一写黑名单；只要有任一季成功提交过就不拉黑，避免多季分享被别的季带累。
+- `app/application/netdisk/share_blacklist.py`：只新增常量 `NO_TARGET_EPISODE_DAYS = 1`，文件格式与 7 天默认值未动。
+- `tests/test_download_batch_phases.py`：新增 2 条用例——「分享内没有目标集 → 写入黑名单且 TTL 恰好 1 天」「同一轮只读一次分享目录」。
+
+### 任务 1 证据
+- 新用例：`pytest tests/test_download_batch_phases.py -k "blacklists or read_once"` = **2 passed**。
+- 验收 1：`test_netdisk_share_blacklist + test_download_batch_phases + test_netdisk_failure_reconcile` = **77 passed**（基线 75 + 2），`skipped` 命中 0。
+- 反向验证 1：注释掉 `run()` 里的 `self._flush_share_blacklist()` → `test_no_target_episodes_blacklists_share_for_one_day` 红（`assert None is not None`）；还原后 2 passed。
+- 反向验证 2：去掉 `_netdisk_share_files` 的缓存命中分支 → `test_netdisk_share_directory_is_read_once_per_batch` 红（实际读到 2 次）；还原后 2 passed。
+- 架构：`tests/test_architecture_dependencies.py` = **108 passed**。
+- pylint（两个改动文件）= **10.00/10**，仅 pylint 缓存目录告警。
+- 更宽回归：`test_netdisk_module + test_pansou_module + test_cloudsaver_module + test_netdisk_share_blacklist_api + test_netdisk_search_flow` = **198 passed / 1 failed**；唯一失败 `test_netdisk_module.py::test_filter_episodes_keeps_unparseable_when_nothing_matches` 在 `git stash` 回 HEAD 后同样失败，属既有红，与本次改动无关。
+
+### 任务 2 提交与上线（2026-11-23 10:00）
+- 后端提交 `2a80b19a0`（v3 分支，3 文件 +214/-16）已推送，`git ls-remote` 与本地一致；CI `Docker Hub Image` run `45097184419` success（4m33s），版本提交 `e31b6088a` → **v3.2.8.25**。
+- 部署：`/data/movie-pilot` 备份 `docker-compose.yml.bak-20261123-095953` → `docker compose pull`（新镜像 `sha256:3cd438cff769`，2026-11-23T01:57:24Z，旧 `sha256:2999cf1b`）→ `up -d --force-recreate` → 第 6 次轮询 healthy（约 30 秒）。
+- 镜像内验证：`/app/app/chain/download/batch.py` 命中 `_flush_share_blacklist` 2 次、`/app/app/application/netdisk/share_blacklist.py` 命中 `NO_TARGET_EPISODE_DAYS` 1 次；`APP_VERSION = v3.2.8.25`；容器 healthy。
+- 订阅 23 记账：备份 `/data/movie-pilot/config/user.db.bak-20261123-100143`（sqlite backup API，一致性快照）后把 `subscribe.id=23` 的 note 置空（原 135 字符）。
+
+### 事故与修复：note 置空写成了非法 JSON（2026-11-23 10:01–10:06）
+- 现象：置空后日志出现 `json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)`，栈顶为 `app/db/models/subscribe.py:300 get_by_state`；`定时任务 订阅刷新` 报 ERROR，共 21 条。
+- 根因：`subscribe.note` 是 JSON 列，`''` 不是合法 JSON（空数组应为 `[]`）；一条坏行会让整张订阅查询反序列化失败。
+- 修复：把 `note` 改为 `'[]'`（合法空数组），复查 `json_valid(note)=0` 的行数为 0；10:06:5x 起其他订阅（牧神记）恢复处理，10:13 之后无 ERROR。
+- 影响窗口：约 5 分钟（10:01:43 写入 → 10:06 修复），期间订阅刷新任务失败，未产生其他副作用；`user.db.bak-20261123-100143` 为回滚点。
