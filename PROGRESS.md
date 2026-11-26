@@ -770,3 +770,10 @@
 - 两项棘轮红都不是本轮引入：`99e92832f` 与 `3a10261f9` 两次运行里 Architecture Ratchet Gate 同样红。根因是上游合并后基线水位没跟上：复杂度报告 6 个函数超出水位——`app/domain/aired.py:aired_seasons` 15→22、`app/application/netdisk/download_verify.py:_verify_impl` 15→18、`app/application/site/mutation.py:SiteMutationCommand.create` 15→18、`app/application/torrent/download.py:TorrentHelper.match_torrent` 16→17、`app/chain/download/submission.py:_prepare_download_single` 15→16、`app/chain/transfer/workflow.py:_run_transfer_workflow` 15→16；覆盖率报告 3 个文件存量下降——`app/chain/transfer/workflow.py` 93.36→92.25、`app/db/adapters/mediaserver.py` 100→95.24、`app/db/oper/mediaserver.py` 94.51→91.47。
 - 按任务书「不许用 --write 掩盖实现问题」，这两项没有刷基线：复杂度棘轮本身也拒绝增长，只有下降才能 `--write`。下一步是把这 6 个函数拆小（把网盘分支抽成小函数）并把 3 个文件的存量行覆盖回来，属于独立一件事。
 - 父仓指针已更新到后端 `c5fc22b6f`、前端 `d921c89d`。
+
+### 复杂度门禁修好，暴露下一层（2026-11-26 17:1x）
+- 后端 `b47be1d23` + `ffbfc0ae9`：把 6 个超限函数的圈复杂度降回水位（aired_seasons 22→、_verify_impl 18→、SiteMutationCommand.create 18→、match_torrent 17→、_prepare_download_single 16→、_run_transfer_workflow 16→），全部是把分支抽成小函数，行为不变；顺带修了重构带出的类型问题（`set[str]`、缓存键元组类型、空候选返回 cast）。
+- 本地三项门禁全绿：`complexity.py` 通过、`ruff_ratchet.py` 通过、`test_type_gate` 1 passed；受影响测试 1043 passed。
+- 最新 CI（run 45788129934）：6 个 Unit Tests 分片全绿、Architecture Contract Gate 绿、Pylint 绿、Docker 绿；Architecture Ratchet Gate 仍红，但失败点已经从复杂度推进到**并发棘轮**：`app/api/endpoints/history.py` 的 content_verify_accept/delete/list 用 `asyncio.to_thread`、`site.py:site_icon`、`app/application/netdisk/audit.py` 的 `run_in_threadpool`、`download_verify.py` 的 `threading.Thread` 都是新增并发事实，而该棘轮「拒绝新增/增长」，`--write` 只能刷新下降后的水位。
+- Coverage Report 仍红：`app/chain/transfer/workflow.py` 93.36→92.25、`app/db/adapters/mediaserver.py` 100→95.24、`app/db/oper/mediaserver.py` 94.51→91.47，需要给合并进来的新代码补测试。
+- 下一步（按依赖顺序）：① 把网盘这几处原生线程/线程池调用改走项目既有的并发助手（或说明后登记，但棘轮只允许下降）；② 给三个覆盖率下降文件补用例。
