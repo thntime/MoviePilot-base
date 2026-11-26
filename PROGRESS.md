@@ -792,3 +792,10 @@
 - `a5a541123`：启动性能门禁按宿主模块计数比对（635/637/621 → 651/653/637）判红，只同步这三个平台无关的计数，时间样本与平台标记不动（CI 实测中位数 2385ms 仍在 3000ms 预算内）。
 - 最新 CI（run 45804975068）：**Architecture Ratchet Gate 转绿**（复杂度、并发、async 阻塞、后台任务归属、Ruff、mypy、启动性能七步全过），Architecture Contract Gate 绿，6 个单测分片全绿，Pylint 绿，Docker 绿。
 - 只剩 **Coverage Report**：`app/chain/transfer/workflow.py` 93.36%→92.28%，约 6 条语句。CI 报的缺失行里，合并带进来的两块最可能是差口：1299-1307（整理准入恢复绑定）、1371-1372（音乐封面跳过），另有 1174-1178、1237-1241。下一轮按这几块补用例即可，不许下调 `coverage-baseline.json`。
+
+### 两边 CI 全绿（2026-11-26 19:2x）
+- `4e86988d2`：补整理链兜底分支用例（候选归一、集数范围文案、下载器监控判定兜底、分享标题回退、内容校验异常放行），覆盖率缺口 14 条语句全部补上。
+- `fff6080ad`：pansou 用例隔离系统配置与分享黑名单——质量门会读系统配置门槛、搜索前查持久化黑名单，同进程其它用例的改动会漏进来，把候选当黑名单命中丢掉；在 `server` 夹具里换成确定的空实现。
+- 验收复跑：任务 0 第 1–3 条命令 **93 passed / 0 failed**；网盘七目录组合 **21 failed / 1373 passed**（21 条全是既有 Windows 专有红）；`baseline.py --check-host` 退出 0；`ruff_ratchet.py` 通过；前端四个 spec **94 passed**、`yarn typecheck` 与 `yarn lint` 退出 0。
+- CI 终态：后端 `test.yml` run 45808938054（提交 `fff6080ad`）**success**——六个单测分片、Architecture Ratchet Gate（复杂度/并发/async 阻塞/后台任务/Ruff/mypy/启动性能）、Architecture Contract Gate、Coverage Report 全过；前端 `test.yml` run（提交 `d921c89de`）**success**。
+- 父仓两个子模块指针更新到后端 `fff6080ad`、前端 `d921c89de` 并推送。
