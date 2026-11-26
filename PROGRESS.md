@@ -742,3 +742,10 @@
 - 剩余 1 条待查：`test_system_settings_contract::test_system_settings_catalog_matches_source_declarations` 在 CI 上红，但本地三种跑法都绿（单独跑 13 passed、整目录 281 passed、用隔离后端核对 `render_catalog()` 与文件逐字节一致）。生成器输入只有 `app/runtime/config.py`、`app/runtime/log.py` 的 AST 与 `SystemConfigKey` 枚举，理论上与平台无关，怀疑是 CI 分片内的全局状态或环境差异，需要下次 CI 带上差异输出再定位；已在任务书里记为遗留项，不阻塞本次合并。
 - 前端 `22214278` 的 CI：`Frontend Tests` 失败，但与 11-13 那次（`31477dab4`）失败集合一致——`DownloadingCard` 失败原因悬停用例、`tests/config/locale-contracts.spec.ts` 的 zh-TW 覆盖、`src/pages/__tests__/dashboard.spec.ts` 十余条，都是既有红，本次推送没有新增失败项。
 - 临时脚本清理：`.tmp/` 下的探针与补丁脚本保留在本地（未提交，后端 `.tmp/` 未跟踪），仓库工作区干净。
+
+### 收尾（2026-11-26 14:4x）
+- 上游当天仍在提交：`0b801fd23`/`dfc96753f`（README 加 `MoviePilot-App`）、`594db970e`（NexusPHP 用户等级归一）都已合入（`bf297fe55`、`a9a3c1a…`→ 最终 `254e99c4f`），后端 `rev-list --left-right --count HEAD...FETCH_HEAD` = `238 0`，前端 `53 0`，9 个 fork 全部 `behind=0`。
+- 修掉同步工作流自身的推送竞态：镜像发布工作流会在 v3 上提交版本号，同步任务若刚好落后一个提交，直接 push 会被判 non-fast-forward 并让整次同步失败（run 45767977580 就是这样）。现在推送失败会先 `fetch` + `merge` 远端再重试，最多三次，`version.py` 冲突采用远端版本号。
+- Plugins 镜像 fork 落后 2 个提交，手动触发同步后已 identical。
+- 后端剩余 jxxghp 引用 24 行、前端 3 行，全部是保留项（版权声明、同步源、上游 issue 出处、未 fork 的 Rust/Build、Docker 镜像名、perf 对照镜像、fixtures 出处、测试用户名）。
+- 父仓库指针：后端 `254e99c4f`、前端 `22214278`。
