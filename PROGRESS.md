@@ -749,3 +749,9 @@
 - Plugins 镜像 fork 落后 2 个提交，手动触发同步后已 identical。
 - 后端剩余 jxxghp 引用 24 行、前端 3 行，全部是保留项（版权声明、同步源、上游 issue 出处、未 fork 的 Rust/Build、Docker 镜像名、perf 对照镜像、fixtures 出处、测试用户名）。
 - 父仓库指针：后端 `254e99c4f`、前端 `22214278`。
+
+### 遗留项收口（2026-11-26 14:4x）
+- 上一轮唯一待查的 `test_system_settings_contract::test_system_settings_catalog_matches_source_declarations`（只在 CI 红、本地全绿）已定位并修好：生成器把来源路径写成 `str(path.relative_to(PROJECT_ROOT))`，Windows 上是 `app\runtime\config.py`、Linux 上是 `app/runtime/config.py`，同一份产物在两个平台渲染结果不同。本地生成的目录提交上去，CI 一渲染就必然对不上；本地跑测时两边都是反斜杠，所以永远绿。
+- 修法：生成器新增 `_source_file()`，用 `as_posix()` 输出，产物与平台无关；重新生成后与上游只差我方网盘设置项（`NetdiskAutoTransferEnabled`、`NetdiskDownloadThreads` 等 20 余条）与改指后的描述文案。
+- 验证：`test_system_settings_contract` 13 passed、`tests/contracts/documentation` 14 passed、`scripts/architecture/baseline.py --check-host` 退出 0；推送后 CI 的 Unit Tests 里该条已转绿（失败从 7 条降到 6 条）。
+- 剩余 6 条 CI 失败全是既有红：`test_netdisk_share_validity_gate` 3 条（替身签名过期）、`test_netdisk_module` 1 条（任务书登记的既有红）、`test_architecture_dependencies` 与 `test_type_gate` 各 1 条（我方 `app/domain/projection/aired.py` 归属与类型问题，合并前代码上同样红）。
