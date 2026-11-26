@@ -755,3 +755,18 @@
 - 修法：生成器新增 `_source_file()`，用 `as_posix()` 输出，产物与平台无关；重新生成后与上游只差我方网盘设置项（`NetdiskAutoTransferEnabled`、`NetdiskDownloadThreads` 等 20 余条）与改指后的描述文案。
 - 验证：`test_system_settings_contract` 13 passed、`tests/contracts/documentation` 14 passed、`scripts/architecture/baseline.py --check-host` 退出 0；推送后 CI 的 Unit Tests 里该条已转绿（失败从 7 条降到 6 条）。
 - 剩余 6 条 CI 失败全是既有红：`test_netdisk_share_validity_gate` 3 条（替身签名过期）、`test_netdisk_module` 1 条（任务书登记的既有红）、`test_architecture_dependencies` 与 `test_type_gate` 各 1 条（我方 `app/domain/projection/aired.py` 归属与类型问题，合并前代码上同样红）。
+
+## 两边 CI 转绿（2026-11-26 15:4x，任务书：让后端与前端 CI 都转绿）
+### 开工回执
+- 理解的目标：把后端 6 条、前端 27 条 CI 红全部修绿，不新增功能；后端先修先推，绿了再动前端。
+- 顺序：任务 0 核对 → 后端 4 条（替身签名、选集兜底用例、aired 归属、mypy 17 处）→ 后端验收推送 → 前端 4 条（zh-TW 键、dashboard 期望、下载卡片 title、季弹窗断言）→ 前端验收推送 → 父仓指针。
+- 最大风险：aired.py 挪位置要连带动依赖基线与 3 处导入，基线重生成若混进无关条目会被人工审阅打回；dashboard 22 条要逐条改期望值，容易漏改导致数字对不上。
+- 任务 0 核对：四条全对上——① 4 failed / 87 passed；② 1 failed，`Extra items` 里有 `aired.py`；③ 1 failed，17 处 mypy 报错；④ 前端 27 failed / 67 passed（4 个 spec 全红）。
+
+### 任务 1–4 与前端修复完成（2026-11-26 16:3x）
+- 后端 `c5fc22b6f`：分享闸门替身签名（3 条）、选集兜底用例换真解析不出集数的名字（1 条）、aired 投影挪到 `app/domain/aired.py`（含 3 处导入、依赖基线、架构总览文档）、mypy 17 处类型收窄。验收：任务 0 前三组命令 93 passed；网盘组合 21 failed / 1367 passed（21 条全是既有的 Windows 专有红）；`baseline.py --check-host` 退出 0；`ruff_ratchet.py` 通过。
+- 前端 `d921c89d`：zh-TW 补 13 个键（缺口 0）、仪表盘用例按 netdiskStatus 更新（32 passed）、下载卡片失败原因改回只在 title 里并加虚线下划线提示、季弹窗断言改为缓存代理地址。验收：四个 spec 94 passed；`yarn typecheck`、`yarn lint` 退出 0；**Frontend Tests run 45780700000 左右 success**。
+- 后端 CI 现状（run 45781414886 / 457817…）：6 个 Unit Tests 分片全绿、Architecture Contract Gate 绿、Pylint 绿、Docker Hub Image 绿；仍红两项：Architecture Ratchet Gate（结构复杂度）与 Coverage Report（覆盖率棘轮）。
+- 两项棘轮红都不是本轮引入：`99e92832f` 与 `3a10261f9` 两次运行里 Architecture Ratchet Gate 同样红。根因是上游合并后基线水位没跟上：复杂度报告 6 个函数超出水位——`app/domain/aired.py:aired_seasons` 15→22、`app/application/netdisk/download_verify.py:_verify_impl` 15→18、`app/application/site/mutation.py:SiteMutationCommand.create` 15→18、`app/application/torrent/download.py:TorrentHelper.match_torrent` 16→17、`app/chain/download/submission.py:_prepare_download_single` 15→16、`app/chain/transfer/workflow.py:_run_transfer_workflow` 15→16；覆盖率报告 3 个文件存量下降——`app/chain/transfer/workflow.py` 93.36→92.25、`app/db/adapters/mediaserver.py` 100→95.24、`app/db/oper/mediaserver.py` 94.51→91.47。
+- 按任务书「不许用 --write 掩盖实现问题」，这两项没有刷基线：复杂度棘轮本身也拒绝增长，只有下降才能 `--write`。下一步是把这 6 个函数拆小（把网盘分支抽成小函数）并把 3 个文件的存量行覆盖回来，属于独立一件事。
+- 父仓指针已更新到后端 `c5fc22b6f`、前端 `d921c89d`。
