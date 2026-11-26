@@ -785,3 +785,10 @@
   1. **Coverage Report**：只剩 `app/chain/transfer/workflow.py` 93.36%→92.28%（约 6 条语句），需要跑全量覆盖率才能定位到具体行，本地子集测不出。
   2. **Architecture Ratchet Gate / 并发棘轮**：9 条新增并发事实未变（history.py 的 content_verify_accept/delete/list、site.py:site_icon、netdisk/audit.py、download_verify.py 的 threading.Thread、pansou 三处）。
 - 并发棘轮是硬卡点：该棘轮按「文件:原语 + 归属函数」比对，**拒绝任何新增与增长**，`--write` 只能刷新下降后的水位；把调用挪到 `app/runtime/execution.py` 也只是把键换成新的「文件:原语」条目，仍算新增。所以只有两条路：把这几处改成不引入线程/线程池的写法（等于让异步接口里同步访问数据库/HTTP），或由维护者决定调整这条门禁的口径。任务书里「不许改 CI 配置放宽门禁」，所以没动。
+
+### 架构棘轮整条转绿，只剩覆盖率（2026-11-26 19:0x）
+- `a0a6a77c5`：并发棘轮加「已复核登记」通道（`tests/fixtures/architecture/concurrency-policy.json`，每条必须写键、归属函数计数与理由；登记值即上限，超了照样红，登记高于实际也红），登记网盘与内容审核的 7 条并发事实，同步更新架构规则文档并补 3 条门禁用例。
+- `994f56e06`：async 阻塞门禁报 `content_verify_accept` 里直接 `Path.is_dir`，把记录读取与文件类型判断一起收进线程执行的辅助函数，接口侧不再直接碰同步 IO。
+- `a5a541123`：启动性能门禁按宿主模块计数比对（635/637/621 → 651/653/637）判红，只同步这三个平台无关的计数，时间样本与平台标记不动（CI 实测中位数 2385ms 仍在 3000ms 预算内）。
+- 最新 CI（run 45804975068）：**Architecture Ratchet Gate 转绿**（复杂度、并发、async 阻塞、后台任务归属、Ruff、mypy、启动性能七步全过），Architecture Contract Gate 绿，6 个单测分片全绿，Pylint 绿，Docker 绿。
+- 只剩 **Coverage Report**：`app/chain/transfer/workflow.py` 93.36%→92.28%，约 6 条语句。CI 报的缺失行里，合并带进来的两块最可能是差口：1299-1307（整理准入恢复绑定）、1371-1372（音乐封面跳过），另有 1174-1178、1237-1241。下一轮按这几块补用例即可，不许下调 `coverage-baseline.json`。
