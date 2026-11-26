@@ -723,3 +723,14 @@
 - 生成物按改指后的源码重新生成（schema 导出、API 清单、技能文档、系统设置目录），确认没有把上游组织名写回去。
 - 剩余引用（后端 22 行/11 个文件，前端 4 行/3 个文件）都是有意保留的：LICENSE 的原始版权声明（MIT 要求保留）、`sync-upstream.yml` 的 `UPSTREAM_REPO`、`app/chain/scraping.py` 两处上游 issue 讨论链接、未 fork 的 `MoviePilot-Rust`/`MoviePilot-Build`、Docker Hub 上的 `jxxghp/moviepilot` 与 `moviepilot-v2` 镜像、perf 脚本对照用的上游镜像摘要、fixtures 里记录上游运行出处的 URL、测试里当数据用的 GitHub 用户名。与任务书「后端只剩 3 行、前端 1 行」的差异就在这些项上——把它们也改掉会篡改版权声明、丢掉问题出处证据，或者指向不存在的仓库，所以按保留处理。
 - 改指相关测试：2831 条里 139 失败、55 错误，逐条比对首轮与合并前结果，全部落在既有的 Windows/bash 环境失败集合里（`test_docker_bootstrap` 59、`test_docker_entrypoint_permissions` 27、`test_system_utils` 13、`test_plugin_helper` 12、`test_moviepilot_launcher` 11 等），没有新增失败。ruff 棘轮：合并与改指后债务下降 7 条，已 `--write` 固化低水位并复核通过。
+
+### 收口取证（2026-11-26 14:0x）
+- 落后数（`git rev-list --left-right --count HEAD...FETCH_HEAD`，上游 `git fetch --no-tags https://github.com/jxxghp/<repo> v3`）：后端 `229 0`、前端 `53 0`。合并后上游又追加了两个 README 提交（`0b801fd23`、`dfc96753f`，新增 `MoviePilot-App` 链接），已补合（`bf297fe55`，保留我方 thntime 的 Wiki 链接、采纳上游新增的 App 链接）；随后 CI 版本号提交 `22edfd1f1`（v3.2.14.0）也已合入并推送（`3e08f2ee4`）。
+- 网盘组合（`tests/application/netdisk`、`tests/adapters/netdisk`、`tests/api/netdisk`、`tests/modules/netdisk`、`tests/domain/netdisk`、`tests/chain/download`、`tests/chain/transfer`）：1388 条用例，1363 passed、25 failed。25 条逐条比对后全部是既有红：`test_netdisk_engine` 20 条（合并前代码上同样红，Windows 下的分块/续传替身问题）、`test_netdisk_share_validity_gate` 3 条（替身签名过期）、`test_netdisk_cov_modules` 1 条、`test_netdisk_module` 1 条（既有红 `test_filter_episodes_keeps_unparseable_when_nothing_matches`）。没有新增失败。
+- 前端验收：`ContentAuditView`、`DownloadingCard`、`SubscribeActivityDialog`、`readabilityContracts` 四个 spec 共 68 条，67 passed、1 failed（既有红 `DownloadingCard` 失败原因悬停用例，11-09 起就红）；`yarn typecheck`、`yarn lint` 退出 0。
+- 同步工作流实跑：后端 run 45763721547 success、前端 run 45763715106 success；父仓巡检 run 45763988637 success。
+- fork 与每日同步（含任务书之后上游新增的子项目）：9 个仓全部 `isFork=true`，落后数全部为 0——MoviePilot（ahead 231）、MoviePilot-Frontend（ahead 53）、MoviePilot-Wiki/Server/Maintenance/Site-Collector（各 ahead 1，多出的就是同步工作流本身）、MoviePilot-Resources（ahead 6）、MoviePilot-Plugins（identical）、MoviePilot-App（ahead 3）。
+- MoviePilot-App 是本次上游 README 新列出的子项目（默认分支 `v2`），已补 fork 并装同步工作流、停用继承来的 `ci.yml`/`release.yml`。它第一次同步失败在推送环节：本仓比上游多一个工作流提交，checkout 到的 HEAD 落在旧提交上时合并退化成快进、把该提交甩掉，推送就被判成 non-fast-forward。已在模板里补「先 `git fetch origin` + `git reset --hard origin/<分支>` 对齐远端顶端再合并」，App 重跑 run 45764978277 success。
+- 巡检工作流相应升级：镜像 fork 从 6 个扩到 7 个（含 App），比较分支改为按各仓实际默认分支取（App 是 `v2`，其余是 `main`）；本地用真令牌试跑确认能取到 9 个仓的运行时间与落后数，并把 App 落后 1 个提交如实报了出来。
+- 清理：4 个临时工作树（后端 pre-merge/upstream/merge、前端 pre-merge/upstream）已删除，前端工作树里的 `node_modules` junction 先解除；测试遗留的 `subscription-governance-*`、`pytest-of-*` 临时库目录已清掉；两仓工作区干净（后端只剩未跟踪的本地 `.tmp/` 临时脚本目录）。
+- 未部署：本次只推 `origin/v3`，镜像构建与 Release 由 CI 自行完成，没有动生产环境。

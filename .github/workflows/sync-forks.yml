@@ -1,9 +1,9 @@
 name: Sync Forks
 
-# 每天巡检 8 个 fork 的上游同步是否正常，发现异常就在本仓库开 issue：
+# 每天巡检 9 个 fork 的上游同步是否正常，发现异常就在本仓库开 issue：
 #   1. 任一仓库的「Sync Upstream」最近 48 小时没有任何运行记录
 #      （GitHub 停用 fork 的工作流、定时任务被停用、工作流被删都会表现成「静默」，不巡检没人会发现）；
-#   2. 6 个纯镜像 fork 的默认分支落后于上游（同步失败、冲突未处理或长期没跑）。
+#   2. 7 个纯镜像 fork 的默认分支落后于上游（同步失败、冲突未处理或长期没跑）。
 #
 # 同步动作本身由各仓库内的 .github/workflows/sync-upstream.yml 完成：GitHub 的 GITHUB_TOKEN 只能写自己所在的
 # 仓库，从本仓库跨仓库快进需要自备令牌，所以这里只做巡检与告警。
@@ -37,6 +37,7 @@ jobs:
       MIRROR_REPOS: >-
         MoviePilot-Wiki MoviePilot-Server MoviePilot-Maintenance
         MoviePilot-Site-Collector MoviePilot-Plugins MoviePilot-Resources
+        MoviePilot-App
       SILENT_HOURS: 48
     steps:
       - name: Audit fork sync
@@ -66,13 +67,15 @@ jobs:
           done
 
           for repo in ${MIRROR_REPOS}; do
-            status=$(gh api "repos/${FORK_OWNER}/${repo}/compare/${UPSTREAM_OWNER}:main...${FORK_OWNER}:main" \
+            # 各镜像 fork 的默认分支不同（多数是 main，App 是 v2），按仓库实际默认分支比较。
+            branch=$(gh api "repos/${FORK_OWNER}/${repo}" --jq '.default_branch')
+            status=$(gh api "repos/${FORK_OWNER}/${repo}/compare/${UPSTREAM_OWNER}:${branch}...${FORK_OWNER}:${branch}" \
               --jq '"\(.status) behind=\(.behind_by) ahead=\(.ahead_by)"')
-            echo "${repo}: ${status}"
+            echo "${repo}(${branch}): ${status}"
             behind=$(printf '%s' "${status}" | sed -n 's/.*behind=\([0-9]*\).*/\1/p')
             if [ "${behind}" != "0" ]; then
-              printf -- '- `%s` 没有跟上上游：%s；到 %s/%s/actions 查看「Sync Upstream」是否失败。\n' \
-                "${repo}" "${status}" "${FORK_OWNER}" "${repo}" >> "${report}"
+              printf -- '- `%s`（%s）没有跟上上游：%s；到 %s/%s/actions 查看「Sync Upstream」是否失败。\n' \
+                "${repo}" "${branch}" "${status}" "${FORK_OWNER}" "${repo}" >> "${report}"
             fi
           done
 
