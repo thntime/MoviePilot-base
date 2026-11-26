@@ -598,3 +598,128 @@
 - 硬指标二：✅ 77 passed（基线 75 + 2 新增）、skipped 0、pylint 10.00/10 无新增；后端 `git diff --stat` 仅 3 个白名单文件。
 - 硬指标一（后半）：✅ 清空 note 后缺集重算为 E168-E200，已提交并下完 E168（`quark:458a801712e9` 100%），`note=[168]`、`lack_episode=32`。
 - 硬指标一（前半）：⏳ 未达成，原因是设计取舍——分享当前有可下集数，按「出过可下内容不拉黑」不应被封；要等 169-194 下完（约 13GB，按实测 66MB/min 约 3.3 小时）后再跑一轮才会出现 `uc:b442f632b23c4`。10:00 之后生产日志里「分享内没有目标集」条数 = 0，说明原先每小时空转的那条路径已经不再触发。
+
+### 2026-11-23 内容门与订阅时间线修复（开工回执）
+- 目标：门 2 在真实形状下得分 >0；零证据不记已通过；订阅只搜已播出的集；整季包与目标求交；搜索门按目标名判剧；最后清生产 34 个错文件并改订阅 23。
+- 顺序：任务 1（门看见文件）→ 2（零证据）→ 3（订阅封顶）→ 4（整季求交）→ 5（搜索门）→ 6（清生产，前面全绿才动）。
+- 基线实测（2026-11-23）：6 个测试文件 91 passed、退出码 0；全量在 Windows 有 1 个 gbk 收集错误，不作为门。
+- 已核对：workflow.py:747 传入的 file_items 是 _collect_transfer_candidates 返回的 [(FileItem, bool)]（workflow.py:507-509）。
+- 最大风险：任务 3 改订阅有效总集数口径，可能影响非 TMDB 源集数；任务 6 是生产删数据，严格按集号白名单。
+### 2026-11-23 内容门与订阅时间线修复（任务 1-5 完成）
+- 任务 1（门看得见文件）：workflow.py 新增 `_candidate_fileitems` 解包二元组、`_share_title_for_verify` 取下载历史分享标题；content_verify.py 抽帧与时长探测只数视频后缀。红：`total_size=0`/`_share_title_for_verify` 缺失/对字幕抽帧；绿：新增 3 用例全过。
+- 任务 2（零证据不记已通过）：download_verify.py 在 `matched and score==0 and not frames` 时置 `checked=False` 并加前缀「无有效证据」。红：`checked=True`；绿：34 passed。
+- 任务 3（订阅封顶）：新建 `app/domain/projection/aired.py`（口径自 api/endpoints/netdisk.py 下沉，端点改调、行为不变），refresh.py 有效总集数按已播出集号封顶；`include_fallback=False` 避免把元数据集数当已播出。红：200 == 168 失败；绿：4 passed + 订阅回归 207 passed。
+- 任务 4（整季求交）：batch.py 新增 `_resolve_season_target`，required 为空时按订阅范围裁剪。红：方法缺失；绿：4 passed。
+- 任务 5（搜索门判剧）：candidates.passes_quality 加 `target_names` 与 `_target_mismatch`；cloudsaver 与 pansou 各串 5 处签名，搜索入口传关键词。红：TypeError；绿：4 passed。
+- pylint 错误级：仅剩 `content_verify.py` 的 E1101 `__dataclass_fields__`，基线同样存在（基线 683 行 → 现 692 行），无新增。
+- 已知既有失败（非本次引入，基线同组合同样失败）：`test_pansou_module.py::test_search_parses_merge_response_into_candidates`（测试间缓存污染）、`test_download_chain.py` 3 条（settle/subtitles）。已用 `git stash` 对照基线复现。
+### 2026-11-23 任务 6 生产清理与硬指标核对
+- 备份：容器内 sqlite backup API 生成 `/config/user.db.bak-20261123-163704`，382967808 字节（宿主 `/data/movie-pilot/config/`）。
+- 清单核对：`transferhistory where src like '%b442f632b23c4%'` 正好 17 行，集号 170/172/173/174/176/177/179/180/184/185/186/187/188/189/190/193/194；同目录下这 17 集的 mp4 与 nfo 共 34 个文件（预演与实删两轮都校验了目录、前缀、集号白名单）。
+- 删除：removed 34 / failed 0，目录条目 702 → 668；复查 mp4 共 73 个、最大集号 168、E168 仍在、≥170 为空。
+- 订阅：`subscribe.id=23` 由 (200, 0, '[168…194]') 改为 (168, 1, NULL)，复查输出 168/1/None。
+- 生产日志：最近 400 行 37 条 ERROR 全是既有的「用户未认证，无法使用站点功能！」（torrents.py），与本次改动无关。
+- 硬指标一：6 个基线文件 + 4 个新测试文件 = 108 passed、skipped 0（基线 91 + 新增 17）。
+- 硬指标二：`git status` 仅 9 个白名单文件被改、新增 `app/domain/projection/aired.py` 与 4 个测试文件；`git diff --stat` 208 插入 / 107 删除。
+- 与任务书的偏差（建议类，已按「有更好的路就走」处理并记录）：
+  1. 端点下沉后 `_audit_last_aired_point` 与 `import datetime` 成为死代码，已一并删除（属同一次下沉）。
+  2. `aired_episode_cap` 在拿不到播出证据时返回 None（不封顶），并给 `aired_seasons` 加 `include_fallback` 开关；否则特别篇 S0 的总集数会被元数据集数误降（`test_subscribe_chain` 用例当场暴露）。
+  3. `_inspect_netdisk_season` 的日志文案改为「分享内没有目标范围内的集数」，与新的裁剪口径一致。
+  4. cloudsaver 与 pansou 各串了 5 处签名（书里写「各接一处」，实际必须沿 `_filter_alive_shares → _inspect_share → _inspect_remote_share → _passes_quality` 传递）。
+- 未做（另起一轮）：镜像构建与生产部署，所以生产此刻仍跑旧镜像；脏数据与订阅参数已就位，不会再搜未播出集。
+- 无受阻项。
+### 2026-11-23 内容门上线（v3.2.8.27，任务书 v2）
+- 前置修复（22:10）：拉黑假分享 `uc:f06d41ce27a04`（1 天，到期 11-24 22:10），把订阅 34 的 `note` 由 `[9…18]` 清成 `[]`；备份 `user.db.bak-20261123-221050`、`netdisk_share_blacklist.json.bak-20261123-221050`。效果：22:36 提交真源「两京十五日 (2026) 4K S01E01-E10」E09-E10，7/8 集也重新下，媒体库已到 E01-E10。
+- 任务 0：10 个测试文件 108 passed；容器 `import app` ok。
+- 任务 1：新增 `_begin_netdisk_task`（写 state=downloading 时置 `reconciled=False`），两处任务开始写入改为调用它。红：`AttributeError: _begin_netdisk_task`；绿：新测试 2 条 + 对账相关 39 passed；全量 147 passed；pylint 无 error。
+- 任务 2：提交 `3a938be80`（17 文件 +965/−112）+ `a646897e6` 版本提交；push 成功（远端 v3 = a646897e6）。
+- 任务 3：push 未触发 CI（head 提交带 `[skip ci]`），改用 `gh workflow run docker-hub.yml --ref v3`（run 45202512501 success，约 4 分钟）；CI 自动 bump 到 v3.2.8.27 并推送 `15718b3af`。部署：备份 `docker-compose.yml.bak-20261123-2318` → `docker compose pull` → `up -d --force-recreate`；旧镜像 `sha256:3cd438cff769`（revision 2a80b19a0）→ 新 `sha256:e3dd67cbb5c7`（revision label a646897e6）。
+- 任务 4 行为探针（容器内按真实二元组形状跑）：部署前 `PROBE1 score=0 total_size=0 pass` / `PROBE2 score=0 pass`；部署后 `PROBE1 score=5 total_size=520000000 pass` / `PROBE2 score=0 decision=skipped reason=无有效证据`。红→绿成立。
+- 部署后核对：容器 healthy、`/health/ready`=200、`APP_VERSION=v3.2.8.27`；媒体库两京十五日 E01-E10，7-10 集时长 2490/2490/2764/2764 秒（正片，非 121 秒假货）。
+- 偏差（建议类）：① 书里版本号 v3.2.8.26，实际 v3.2.8.27（CI 自动再 bump 一次）；② push 未触发 CI，改用手动 dispatch；③ 镜像 revision label 记的是 dispatch 的 ref（a646897e6），代码实际是 CI bump 后的 15718b3af；④ 探针 PROBE2 的路径改成不含目标名的目录，否则目录名命中使证据非零。
+- 无受阻项。
+### 2026-11-24 09:15 事故复盘与修复（v3.2.8.28）
+- 事故：v3.2.8.27 把「已播出封顶」写进 `__resolve_effective_total_episode` 与 `__refresh_total_episode_before_completion`，该值同时决定「整季是否下完」，导致 8 个连载订阅（完美世界、斗罗大陆Ⅱ、遮天、牧神记、光阴之外、凡人修仙传、罗小黑战记、两京十五日）在 23:25–00:20 被判「已全部下载」并完成删除。日志证据：`refresh.py 订阅 34 进度刷新：lack_episode 16->0` → `completion.py 完成订阅`。
+- 止损：镜像回滚到 `3cd438cff769`（v3.2.8.25）；从 `user.db.bak-20261123-221050` 恢复 8 条订阅（恢复前另存 `user.db.bak-restore-20261124-003221`），订阅数回到 12；回滚后 0 条误判完成。
+- 修复（提交 `1b8aee465`）：两处封顶删除，新增 `__clip_no_exists_to_aired` 只裁缺集列表（未播出的集不进搜索目标），`exist_flag` 不参与裁剪。
+- 测试：`test_effective_total_episode_is_capped_by_aired` 改为 `ignores_aired_cap`；新增 `test_clip_no_exists_drops_unaired_episodes`、`test_resolve_subscribe_missing_keeps_series_open`；相关 13 个文件 149 passed、pylint 无 error。
+- 构建部署：push 触发 CI（本次 head 无 `[skip ci]`，与昨晚 push 不触发的差异就在这里），run 45302728459 success，取消多余的手动 dispatch；镜像 `sha256:23f0352bd633`（revision 1b8aee465）、`APP_VERSION=v3.2.8.28`、healthy、`/health/ready`=200。
+- 部署后验证：完成判定探针 `TOTALS {1: 26} EXIST_FLAG False EPISODES [] VERDICT OK`；内容门探针 `PROBE1 score=5 total_size=520000000`、`PROBE2 skipped`；12 条订阅完整、total_episode 保持 TMDB 原值、部署后 0 条完成事件。
+- 教训：封顶属于「搜索目标范围」概念，不能进「总集数/完成判据」；一处改动被两个语义共用时，必须分别验证。
+### 2026-11-24 10:10 完美世界误删查证与二次修复（v3.2.8.29）
+- 查证结论：完美世界 09:20:54 被完成，根因是我在 v3.2.8.28 里把缺集裁剪放在了 `get_no_exists_info` 之后。`resolve_subscribe_missing` 的电视分支会用裁剪后的 `no_exists` 去调 `__get_subscribe_no_exits`（与订阅 note 合并算最终缺失），裁剪把未播出的 289-338 剔掉后，只剩媒体库缺的 100、259，而这两集在 note 里被乐观记账，合并后缺失为空 → `exist_flag=True` → 判「已全部下载」并删订阅。
+- 红证据：`git stash push app/chain/subscribe/refresh.py` 回到先裁剪版本后，新测试 `test_clip_does_not_mark_series_complete` 失败（`assert exist_flag is False`）；恢复修复后 7 passed。
+- 二次修复（提交 `9872dd57a`）：裁剪从 `get_no_exists_info` 之后移到 `__get_subscribe_no_exits` 之后，完成判定用未裁剪缺集，只有返回给搜索的缺集被裁剪。
+- 测试：新增 `test_clip_does_not_mark_series_complete`（媒体库缺 100/259 + note 记账 + 未播出 289-338 → exist_flag 必须 False）；相关 13 文件 150 passed、pylint 无 error。
+- 构建部署：push 触发 CI run 45309284970 success；镜像 `sha256:6554ddc2c000`（revision 9872dd57a）、`APP_VERSION=v3.2.8.29`、healthy、`/health/ready`=200；compose 备份 `docker-compose.yml.bak-20261124-1012`。
+- 部署后探针：完成判定 `TOTALS {1: 26} EXIST_FLAG False EPISODES [] VERDICT OK`（日志显示原始缺失 [11..26]，返回的 episodes 被裁成 []，exist_flag 保持 False）；内容门 `PROBE1 score=5`、`PROBE2 skipped`。
+- 数据恢复：从 `user.db.bak-20261123-221050` 恢复完美世界（id=5），恢复前另存 `user.db.bak-restore2-20261124-100952`，订阅数回到 12。
+- 教训：给「展示/搜索用」的数据做裁剪，绝不能让它参与「完成判定」；裁剪点必须落在完成判定之后。
+### 2026-11-24 17:12 订阅进度显示口径修复（v3.2.8.30）
+- 现象：订阅卡片「已下载/总集数」大面积显示 0（凡人 0/211、完美世界 0/338、两京 0/26），只有斗破苍穹特别篇正常（21/24）。
+- 根因：卡片进度 = `(total_episode - lack_episode) / total_episode`，而 `compute_lack_episode` 有一条既有语义——缺集列表为空即「整季一个都没找到」，返回总集数。v3.2.8.29 的裁剪把未播出的集从缺集列表剔掉，正好裁成空列表，于是 lack 被写成 total。斗破特别篇正常是因为它没有 `last_episode_to_air`，`aired_episode_cap` 返回 None，压根没被裁剪。
+- 修复（提交 `19a8ff985`）：裁剪从 `resolve_subscribe_missing` 整体搬到 `metadata.prepare_search_target`，新增模块级 `_clip_missing_to_aired`，只裁搜索目标；`resolve_subscribe_missing` 恢复返回完整缺集，进度与完成判定都按完整缺集算。同时删掉 refresh.py 里已无调用点的 `__clip_no_exists_to_aired`。
+- 测试：`test_clip_no_exists_drops_unaired_episodes` 改指 metadata 的新函数；两条 resolve 测试改为断言返回完整缺集；新增 `test_lack_episode_uses_full_missing`（完整缺集 16、空缺集 26，锁住既有语义）；相关 13 文件 151 passed、pylint 无新增 error（`E1102 is_tmdb_recognize_source` 为既有问题，已用 stash 对照确认）。
+- 部署：CI run 45361801735 success；镜像 `sha256:92b2fd2cd0b5`（revision 19a8ff985）、`APP_VERSION=v3.2.8.30`、healthy、`/health/ready`=200；compose 备份 `docker-compose.yml.bak-20261124-1712`。
+- 部署后探针：`LACK_FULL: 16`、`LACK_EMPTY: 26`、`SEARCH_EPISODES: []`、`VERDICT: OK` —— 进度按完整缺集算、搜索目标仍被裁剪，两者已分离。
+- 注意：`refresh.py` 因换行规范化产生了较大的 diff（942 insertions），功能与测试均已验证。
+### 2026-11-24 23:00 开工回执（内容审核四档 + 分页统一，v3.2.8.31）
+- 目标：内容审核落四档（reject/manual/ai/system），按可信度分流人工；分页移到页面最底下与媒体整理页一致。
+- 顺序：任务 1 后端四档判定（先红后绿）→ 任务 2 tier 落库与接口 → 任务 3 前端展示与分页 → 任务 4 部署验证。
+- 任务 0 已核对：后端 5 文件 42 passed；前端 ContentAuditView spec 9 passed；typecheck 与 lint 均 exit 0。
+- 最大风险：档位判定与现有「模型不可用放行」「零证据」分支交叉，容易把未知当异常（已用反向验证兜住：时长探测 None 不得判 reject）。
+- 边界：只改 content_verify.py、download_verify.py、history.py、ContentAuditView.vue 及其测试与 locale；生产写操作只走 CI 镜像部署。
+### 2026-11-24 23:35 内容审核四档 + 分页统一完成（v3.2.8.32）
+- 任务 1 四档判定：新增 `TIER_REJECT/MANUAL/AI/SYSTEM` 常量与 `_resolve_tier`（组合矩阵：硬负或模型强判否→reject；时长与文件名/目录名双证据且 score≥SCORE_SKIP_MODEL→system；其余通过→ai；未校验/零证据/未知→manual）。`verify_downloaded_content` 改为包装 `_verify_impl` + `_with_tier`。红灯：5 个用例全红（`AttributeError: 'VerifyResult' object has no attribute 'tier'`）；绿灯：5 passed。
+- 任务 2 落库与接口：`VerifyRecord` 加 `tier`；ORM 模型加 `tier` 列；新迁移 `a3d7f1c85b42_3_2_8_31.py`（down_revision=c9e5a1f7b3d2）；`history/verify` 加 `tier` 参数与 `tier_counts` 返回；`ContentVerifyItem` 加 `tier`、`ContentVerifyPage` 加 `tier_counts`。
+- 任务 3 前端：内容审核页加四档 chip（结论列内追加，颜色区分）与独立档位筛选行；footer 移出表格卡片并加 `margin-block-start: auto`，页面为 flex column，分页落到页面最底部；三语文案补齐。
+- 任务 4 部署：前端提交 `4827ed84` 先推（镜像构建会 checkout 前端 v3）；后端 `81c8a283b`（功能）+ `64dd52c22`（版本）；CI run 45419734642 success；镜像 `sha256:3e624ba2d5f0`、`APP_VERSION=v3.2.8.32`（CI 再 bump 一版）、healthy、`/health/ready`=200。
+- 生产验证：`contentverify` 表已有 `tier` 列（`PRAGMA table_info` 末位）；老记录 tier 为空（未分档，符合预期）；四档判定探针 `SYSTEM_TIER: system / REJECT_TIER: reject / MANUAL_TIER: manual / VERDICT: OK`；镜像内前端源码 `HAS_TIER_FILTER/HAS_TIER_CHIP/HAS_TIER_LABEL/FOOTER_OUTSIDE_CARD/FOOTER_MARGIN_AUTO/HAS_TIER_I18N` 全为 True。
+- 测试：后端 6 文件 47 passed（42 基线 + 5 新增）；前端 `ContentAuditView` spec 11 passed（9 + 2 档位用例）；typecheck 与 lint 退出 0。
+- 偏差（建议类）：① 零证据仍记 `decision=skipped`、只把 `tier` 标成 manual——改 decision 会破坏既有断言，且 skipped 语义更准；② `test_transfer_verify_list` 的空列表断言同步加了 `tier_counts`（接口契约变更，非放宽断言）；③ `_direct_reject` 本来就没有「文件名指向另一作品」这条（那是搜索门判据），所以硬负用例改用 121 秒时长差验证。
+- 无受阻项。
+
+## 上游同步、补 fork、全仓改指（2026-11-26 10:3x，任务书：上游同步）
+### 开工回执（任务 0 之后）
+- 理解的目标：把后端、前端一次性合到上游 v3 最新（0bae3933e / 98a71572），修好每日自动同步，8 个上游仓全部 fork 到 thntime 并每日同步，代码里剩余的 jxxghp 引用全换成 thntime。
+- 顺序：1 合上游（先后端后前端）→ 2 修 sync-upstream → 3 补 fork + 父仓每日同步 → 4 全仓改指 → 收口取证。
+- 最大风险：上游重构了下载链（submission/failure/history/facade 拆分、测试套件按责任域重排），网盘代码要搬到新结构上，搬错或漏搬会让网盘行为回退。
+- 任务 0 核对：后端 `222 179`、前端 `51 112`，与书一致；网盘组合 274 passed / 1 failed（既有红 `test_filter_episodes_keeps_unparseable_when_nothing_matches`）；前端三份 spec 54 passed。
+
+### 任务 1 进度（2026-11-26 12:3x，合并已解完冲突，验证中）
+- 后端冲突 54 个文件全部裁决：生成物（version.py、架构文档、技能文档、架构基线）先取上游再用仓库脚本重新生成；代码文件逐块人工合并；上游把测试套件按责任域重排，被搬走且重写度过高的两个测试（test_downloader_submission、test_episode_file_selection）在新路径上补回「按方法签名过滤参数」的替身（抽成 `tests/support/download/dispatch.py`）。
+- 发现并修正的合并缺陷（均为全量跑测暴露）：① `endpoints/download.py` 里旧的 `Context(...)` 构造覆盖了上游带来源追溯的新构造（豆瓣转 TMDB 后 `origin_media` 丢失）→ 删重复行；② `submission.py` 的 `_netdisk_platform_rejection` 丢了 `@staticmethod` → 补回；③ 迁移链出现两个 head（我方 `a3d7f1c85b42` 与上游 `c4e8f1a29b03` 同接 `d8a4c6e29170`）→ 新增合并迁移 `4c02986bd95d`，`get_heads()` 恢复单 head；④ 上游把 WebAgent 会话的管理员判定改为按登录用户实时权限解析，我方 5 条网盘确认用例的夹具改为固定管理员上下文；⑤ 上游给历史端点的分页参数加了正数校验，我方 `/history/verify` 端点跟进 `PositivePageParam/PositiveCountParam`。
+- 顺手修掉的既有问题：`app/db/oper/mediaserver.py`、前端 `NetdiskShareAuditDialog.vue` 及其用例带 UTF-8 BOM（上游新测试读源码编译即报错）→ 去掉；`refresh.py` 自 11-24 起每行后多一个空行（1748 行，真实内容 874 行）→ 用未污染版本做三方合并还原，相对上游只剩网盘失败集过滤的 36 行；`scripts/generate_agent_skill_docs.py` 的表指引缺 `contentverify` → 补条目；`app/schemas/exports.py` 导出清单缺我方 7 个 schema → 用 `--write` 重新生成；我方 10 个文件里的 ruff 存量问题（导入排序/无用导入）→ 自动修复，差异文件 ruff 清零。
+- 环境要点：本机跑后端全量必须带 `PYTHONUTF8=1`（否则上游测试用 `read_text()` 读含中文的 JSON 即 GBK 解码失败）；`tests/adapters/system/test_fs_proxy*.py` 里 3 个用例在 Windows 上会卡死并让 pytest-timeout 杀掉整个分片进程（合并前同样卡死）→ 本地全量按文件排除；架构门禁 7 个文件需单独串行跑，机器负载高时会触发 120 秒超时。
+- 首轮全量（修复前）：24330 个用例，失败 521、错误 92；对照合并前基线：既有 401 条、合并新增 33 条、上游新测试 33 条。合并新增里 27 条已修（选集/下载提交替身 25、已播出封顶 2），迁移相关 18 条由合并迁移解决，其余为负载下偶发（单独复跑通过）。上游新测试的 33 条里 26 条在纯上游代码上同样失败（Windows 环境：符号链接权限、bash、路径分隔符）。
+- 前端冲突 9 个文件裁决完成：`vue-tsc --noEmit` 通过；`yarn lint` 通过；相关 11 个 spec 合并前 218 过 1 败、合并后 262 过 1 败（同一条既有失败：下载卡片失败原因是否只在悬停提示里展示，组件与用例口径不一致，11-09 起就红）。
+
+### 任务 1 完成（2026-11-26 13:5x）
+- 后端：`a34650168` 合并提交（父 `64dd52c22` + 上游 `0bae3933e`），`7e08aa2e1` 测试归位与上游新契约，`3c66d365d` 全仓改指，`3d653fa2d` ruff 低水位固化，`b40723930` 合入远端版本号提交；已推 `origin/v3`。
+- 前端：`d7e43d2b` 合并提交（父 `4827ed84` + 上游 `98a71572`），`22214278` 全仓改指；已推 `origin/v3`。
+- 落后数：后端 `git rev-list --left-right --count HEAD...FETCH_HEAD` = `223 0`，前端 = `52 0`（左侧为上游独有提交数，均为 0）。
+- 测试归位：合并后仍有 99 个测试文件在 `tests/` 根目录，上游新规禁止平铺（`scripts/testing/maintenance.py` 记 99 条违规）。按被测代码所在层迁入责任域目录并补 23 个包标记，maintenance 违规 99 → 0；迁移后 99 个文件单独跑 1576 条用例，28 条失败全部是既有的（`test_netdisk_share_validity_gate` 3、`test_netdisk_cov_modules` 1、`test_netdisk_module` 1、下载引擎 20 条在合并前代码上同样红、`test_netdisk_account_refresh` 与 pansou 各 1 条为负载下偶发，单独复跑通过）。
+- 首轮全量遗漏的补齐：首轮 4 分片里第 1 片有 253 个文件没跑（分片函数只收集带 `__init__.py` 的目录，根目录文件被漏掉）。补齐后 3796 过、126 失败、14 错误，失败集中在 `test_music_source_protection`(70)、`test_docker_entrypoint_permissions`(27)、`test_music_cue`(22) 等 15 个文件；把这 15 个文件放到纯上游代码上跑，148 失败、14 错误，逐条比对后只剩 1 条「上游通过而我方失败」：`test_new_host_production_modules_use_single_word_filenames`（我方 `content_verify.py`、`download_verify.py` 两个多词模块未登记）。
+- 该条已按上游机制修好：在 `tests/fixtures/architecture/filename-policy.json` 的 `reviewed_multiword_files` 里按 path 顺序补两条（理由 + 证据），17 passed。
+- 架构门禁（机器空闲时单独跑）：701 条里 20 失败、14 错误。逐条核对后：`test_release_supply_chain`/`test_system_baseline` 共 25 条是 Windows 环境（bash 子进程输出非 UTF-8 导致 `UnicodeDecodeError`，纯上游代码上同样红）；`test_type_gate`/`test_mypy_policy_gate` 报的是我方 netdisk 模块的类型问题（合并前代码上同样报，非本次引入）；`test_architecture_egress` 是策略文件缺我方两条已登记例外——已按上游紧凑排版补回（`app.modules.netdisk.engine -> requests`、`app.api.endpoints.netdisk -> websockets`），19 passed；`test_subscription_governance_scale` 是负载下超时；`test_domain_media_projection_uses_single_word_owner_package` 是我方 `app/domain/projection/aired.py` 违反投影文件集契约（既有问题，建议后续把 aired 投影并入既有 owner 包，本次不动）。
+- 出网策略文件的两处坑：① 用 `json.dump` 重写会把上游的紧凑排版整份改掉，改为按行文本插入；② `mypy-policy.json` 里上游自己有一行顶格（`"path": "app/agent/tools/impl/read_log.py"`），先按我方习惯补缩进再改回上游原样，避免无意义差异。
+- pylint（合并涉及的 40 个文件）：9.99/10，只有 2 条 `app.application.site.sites` 导入错误，属运行期生成的模块（本地没有站点资源包），不是代码问题。
+- 前端：`yarn typecheck`、`yarn lint` 退出 0；验收四个 spec 68 条 67 过，唯一失败是 11-09 起就红的 `DownloadingCard` 失败原因悬停用例（组件与用例口径不一致，既有）。合并引入的两条可读性契约已修：下载卡片三处语义色改用 `--mp-*-fg` 令牌；内容审核页两组筛选胶囊放进 `AppFilterBar`。
+- 前端 Actions 停摆：GitHub 在 fork 时把工作流整体停用（`gh workflow run` 报 422 `Actions has been disabled`），11-14 之后连 `Frontend Tests` 都没再跑过。已在 Actions 页重新启用，8 个工作流恢复 active。
+
+### 任务 2 完成（2026-11-26 13:45）
+- 后端 `sync-upstream.yml`：生成物冲突改为「自动采用上游 + 合并后用仓库脚本重新生成」，生成物清单从 2 项扩到 `docs/mcp-api.md`、`app/schemas/exports.py`、`app/agent/policy/resources/api_mcp_schema.json`、`app/application/settings/resources/system_settings_catalog.json`、`skills/*` 四套技能文档、架构基线；重新生成步骤从 1 个脚本扩到 6 个（架构基线、架构文档、schema 导出、API 清单、技能文档、系统设置目录），生成脚本非零退出只告警不拦推送。`.gitattributes` 里同步把 7 类生成物登记为 `merge=ours`，从源头消除假冲突。
+- 前端 `sync-upstream.yml`：合并成功后先 `yarn install --frozen-lockfile` + `yarn typecheck`，不通过就 `git reset --hard` 回滚并报 issue，避免把合坏的树推上去。前端没有脚本生成的产物，所以不需要自动解决规则。
+- 两个工作流的内嵌脚本都用 `bash -n` 过了语法；手动触发各一次：前端 run 45763715106 success、后端 run 45763721547 success（合并已是最新，`behind=0` 直接走跳过分支）。
+
+### 任务 3 完成（2026-11-26 12:0x）
+- 8 个仓全部 `isFork=true`：MoviePilot、MoviePilot-Frontend、MoviePilot-Wiki、MoviePilot-Server、MoviePilot-Maintenance、MoviePilot-Site-Collector、MoviePilot-Plugins、MoviePilot-Resources。
+- 每个仓都有 `sync-upstream.yml`（Wiki/Server/Maintenance/Site-Collector 四个是本次通过 contents API 加的，Resources 与 Plugins 本来就有），6 个纯镜像 fork 各手动触发一次全部 success（run 45756583457、45756587023、45756590686、45756594157、45756598231、45756602294）；Plugins 另做了一次 `gh repo sync` 快进，结果 identical。
+- fork 里继承来的上游工作流全部停用，只留 `sync-upstream`，避免在 fork 上白烧算力。
+- 父仓库新增 `.github/workflows/sync-forks.yml` 做每日巡检：任一仓库 48 小时没有同步运行记录（Actions 被停用、定时任务被关、工作流被删都表现为静默）或 6 个镜像 fork 落后上游，就开/更新 issue。跨仓库快进需要自备令牌（GitHub 的 GITHUB_TOKEN 只能写自己所在的仓库），所以父仓库只巡检不代跑。本地用真令牌试跑过：8 个仓的运行时间、6 个镜像 fork 的 behind 数都取到了，输出 `unhealthy=true` 并正确列出前端那条「292 小时没运行」。
+
+### 任务 4 完成（2026-11-26 13:44）
+- 后端 161 处（57 个文件）+ 前端 4 处改指，另外单独改了插件官方来源键：`OFFICIAL_PLUGIN_SOURCE_KEY = "github:thntime/moviepilot-plugins"`（18 个文件 40 处，含测试）、`FEEDBACK_REPO_OWNER`、Servarr 的 `packageAuthor`、前端社区勋章的证据链接 base。
+- 生成物按改指后的源码重新生成（schema 导出、API 清单、技能文档、系统设置目录），确认没有把上游组织名写回去。
+- 剩余引用（后端 22 行/11 个文件，前端 4 行/3 个文件）都是有意保留的：LICENSE 的原始版权声明（MIT 要求保留）、`sync-upstream.yml` 的 `UPSTREAM_REPO`、`app/chain/scraping.py` 两处上游 issue 讨论链接、未 fork 的 `MoviePilot-Rust`/`MoviePilot-Build`、Docker Hub 上的 `jxxghp/moviepilot` 与 `moviepilot-v2` 镜像、perf 脚本对照用的上游镜像摘要、fixtures 里记录上游运行出处的 URL、测试里当数据用的 GitHub 用户名。与任务书「后端只剩 3 行、前端 1 行」的差异就在这些项上——把它们也改掉会篡改版权声明、丢掉问题出处证据，或者指向不存在的仓库，所以按保留处理。
+- 改指相关测试：2831 条里 139 失败、55 错误，逐条比对首轮与合并前结果，全部落在既有的 Windows/bash 环境失败集合里（`test_docker_bootstrap` 59、`test_docker_entrypoint_permissions` 27、`test_system_utils` 13、`test_plugin_helper` 12、`test_moviepilot_launcher` 11 等），没有新增失败。ruff 棘轮：合并与改指后债务下降 7 条，已 `--write` 固化低水位并复核通过。
