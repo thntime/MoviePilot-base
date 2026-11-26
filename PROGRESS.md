@@ -734,3 +734,11 @@
 - 巡检工作流相应升级：镜像 fork 从 6 个扩到 7 个（含 App），比较分支改为按各仓实际默认分支取（App 是 `v2`，其余是 `main`）；本地用真令牌试跑确认能取到 9 个仓的运行时间与落后数，并把 App 落后 1 个提交如实报了出来。
 - 清理：4 个临时工作树（后端 pre-merge/upstream/merge、前端 pre-merge/upstream）已删除，前端工作树里的 `node_modules` junction 先解除；测试遗留的 `subscription-governance-*`、`pytest-of-*` 临时库目录已清掉；两仓工作区干净（后端只剩未跟踪的本地 `.tmp/` 临时脚本目录）。
 - 未部署：本次只推 `origin/v3`，镜像构建与 Release 由 CI 自行完成，没有动生产环境。
+
+### 推送后 CI 复核（2026-11-26 14:1x–14:3x）
+- 后端 `fee95c3b5` 的 CI：Pylint success、Docker Hub Image success（构建了 `thntime/moviepilot-v3`，未部署）、Unit Tests 仍有 7 条失败。
+- 其中 5 条是既有红：`test_netdisk_share_validity_gate` 3 条（替身签名过期）、`test_netdisk_module::test_filter_episodes_keeps_unparseable_when_nothing_matches`（任务书已登记的既有红）、`test_architecture_dependencies::test_domain_media_projection_uses_single_word_owner_package` 与 `test_type_gate::test_mypy_governed_scope_passes`（我方 `app/domain/projection/aired.py` 与 netdisk 模块的类型/归属问题，合并前代码上同样红，建议后续把 aired 投影并入既有 owner 包再收紧 mypy）。
+- 已修掉本次合并暴露的 8 条：上游新增的本地化守卫扫描 `app/api/endpoints` 下所有中文 message，我方网盘与内容校验端点有 7 条没有英文/繁体翻译（`网盘站点不支持该能力`、`《{title}》有多个同名版本，请选择要下载的版本`、`不支持的内容校验状态：{status}`、`不支持的内容审核档位：{tier}`、`只支持删除本地文件`、`路径不在下载目录内，已拒绝删除`、`文件不存在或删除失败`），已补进 `app/locales/en-US.json` 与 `zh-TW.json`，本地 19 passed；上游模块能力用例把模块总数与列表接口数量写死成 45/18，我方多出 CloudSaver 与 Pansou 两个模块，按实际值改为 46/19，本地 23 passed。
+- 剩余 1 条待查：`test_system_settings_contract::test_system_settings_catalog_matches_source_declarations` 在 CI 上红，但本地三种跑法都绿（单独跑 13 passed、整目录 281 passed、用隔离后端核对 `render_catalog()` 与文件逐字节一致）。生成器输入只有 `app/runtime/config.py`、`app/runtime/log.py` 的 AST 与 `SystemConfigKey` 枚举，理论上与平台无关，怀疑是 CI 分片内的全局状态或环境差异，需要下次 CI 带上差异输出再定位；已在任务书里记为遗留项，不阻塞本次合并。
+- 前端 `22214278` 的 CI：`Frontend Tests` 失败，但与 11-13 那次（`31477dab4`）失败集合一致——`DownloadingCard` 失败原因悬停用例、`tests/config/locale-contracts.spec.ts` 的 zh-TW 覆盖、`src/pages/__tests__/dashboard.spec.ts` 十余条，都是既有红，本次推送没有新增失败项。
+- 临时脚本清理：`.tmp/` 下的探针与补丁脚本保留在本地（未提交，后端 `.tmp/` 未跟踪），仓库工作区干净。
