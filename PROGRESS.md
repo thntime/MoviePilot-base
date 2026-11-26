@@ -777,3 +777,11 @@
 - 最新 CI（run 45788129934）：6 个 Unit Tests 分片全绿、Architecture Contract Gate 绿、Pylint 绿、Docker 绿；Architecture Ratchet Gate 仍红，但失败点已经从复杂度推进到**并发棘轮**：`app/api/endpoints/history.py` 的 content_verify_accept/delete/list 用 `asyncio.to_thread`、`site.py:site_icon`、`app/application/netdisk/audit.py` 的 `run_in_threadpool`、`download_verify.py` 的 `threading.Thread` 都是新增并发事实，而该棘轮「拒绝新增/增长」，`--write` 只能刷新下降后的水位。
 - Coverage Report 仍红：`app/chain/transfer/workflow.py` 93.36→92.25、`app/db/adapters/mediaserver.py` 100→95.24、`app/db/oper/mediaserver.py` 94.51→91.47，需要给合并进来的新代码补测试。
 - 下一步（按依赖顺序）：① 把网盘这几处原生线程/线程池调用改走项目既有的并发助手（或说明后登记，但棘轮只允许下降）；② 给三个覆盖率下降文件补用例。
+
+### 覆盖率补了两处，并发棘轮卡住（2026-11-26 17:5x）
+- `098e43c37`：补媒体库缓存新接口用例——`MediaServerOper.get_season_episodes`/`async_get_season_episodes`（季集快照按季取号、字符串键兼容、坏集号跳过、缺季/缺快照返回空集）、`TransactionalMediaServerRepository`（备注与季集快照按 JSON 落库、短会话关闭后取号、`delete_stale`/`delete_excluded_servers` 返回删除条数）。CI 覆盖率棘轮里 `db/adapters/mediaserver.py` 与 `db/oper/mediaserver.py` 两条消失。
+- `25ad9278c`：补集数模板不匹配按「跳过」结算的用例，覆盖 `_empty_candidates_result` 的模板不匹配分支（本地实测该分支已被命中）。
+- 最新 CI（run 45792665228）：6 个单测分片、契约门禁、Pylint、Docker 全绿；仍红两项：
+  1. **Coverage Report**：只剩 `app/chain/transfer/workflow.py` 93.36%→92.28%（约 6 条语句），需要跑全量覆盖率才能定位到具体行，本地子集测不出。
+  2. **Architecture Ratchet Gate / 并发棘轮**：9 条新增并发事实未变（history.py 的 content_verify_accept/delete/list、site.py:site_icon、netdisk/audit.py、download_verify.py 的 threading.Thread、pansou 三处）。
+- 并发棘轮是硬卡点：该棘轮按「文件:原语 + 归属函数」比对，**拒绝任何新增与增长**，`--write` 只能刷新下降后的水位；把调用挪到 `app/runtime/execution.py` 也只是把键换成新的「文件:原语」条目，仍算新增。所以只有两条路：把这几处改成不引入线程/线程池的写法（等于让异步接口里同步访问数据库/HTTP），或由维护者决定调整这条门禁的口径。任务书里「不许改 CI 配置放宽门禁」，所以没动。
