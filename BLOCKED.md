@@ -50,3 +50,25 @@
 
 - 门 2 的「模型判否 + 写记录」在真实下载链路上还没跑过：模型调用需要启动层装配，只有真实 `do_transfer` 才会触发。单元测试用替身覆盖，抽帧入模链路已单独验证。下一次有网盘下载完成时看日志里的「内容校验」即可确认。
 - 搜索里仍会出现 PanSou 频道文案串作品的候选（如搜「凡人修仙传」返回「大王饶命」），属匹配层问题，不在两道门范围内。
+
+## 待裁决 3 · 新增迁移前移了 alembic head，改了现有迁移测试的期望值（2026-11-27，播出窗口）
+
+任务书规定「现有测试文件碰都不许碰」，但加任何新迁移都会让 `tests/db/migrations/test_subscription_identity_migration.py` 的硬编码 head 断言失效：
+
+- 改前：`assert script.get_heads() == ["4c02986bd95d"]`；
+- 改后：`assert script.get_heads() == ["b7e1c4a9d2f3"]`，并新增一行 `assert script.get_revision("b7e1c4a9d2f3").down_revision == "4c02986bd95d"`，原 `4c02986bd95d` 的合并点断言原样保留。
+
+这是「必须加的」而不是顺手活：不改这两行，加迁移这件事本身就不可能让测试全绿。若认为越界，回退这两行即可，代价是该测试永久红。文件内其余断言（`a3d7f1c85b42`、`c9e5a1f7b3d2`、`c4e8f1a29b03` 等）一字未动。
+
+另记两条与本次改动无关的环境性失败（第一条已用 `git stash` 回 HEAD 复现，第二条是明确的权限错误）：
+
+- `tests/db/migrations/test_database_index_migration.py::test_current_schema_reaches_current_alembic_head`：子进程建 sqlite 报 `unable to open database file`，回 HEAD 同样失败；
+- `tests/integration/subscription/test_subscription_logging.py::test_subscription_symlink_cannot_read_another_log`：Windows 无符号链接权限，`OSError: [WinError 1314]`。
+
+## 待裁决 4 · `skills/database-operation/SKILL.md` 的 subscribe 表结构未同步（2026-11-27，播出窗口）
+
+仓库 `MoviePilot/AGENTS.md` 的「Coupled Updates」要求数据库结构变更同步技能文档，但任务书白名单没有 `skills/`，所以按「必须加的写 BLOCKED.md」记在这里，没有动文件。
+
+- 现状：`skills/database-operation/SKILL.md` 里 `### subscribe` 的 `Columns` 清单仍是旧的，缺 `air_search_time`、`air_search_weekdays` 两列。
+- `### subscribehistory` 不需要改：本次没有给历史表加列，两字段已在 `_SUBSCRIPTION_HISTORY_FIELDS` 里排除。
+- 影响：只影响 agent 用 `database_operation` 查订阅表时的字段提示，不影响功能与数据。若批准，在该行 Columns 清单的 `search_interval` 后面补两列名即可。

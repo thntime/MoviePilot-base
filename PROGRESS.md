@@ -799,3 +799,33 @@
 - 验收复跑：任务 0 第 1–3 条命令 **93 passed / 0 failed**；网盘七目录组合 **21 failed / 1373 passed**（21 条全是既有 Windows 专有红）；`baseline.py --check-host` 退出 0；`ruff_ratchet.py` 通过；前端四个 spec **94 passed**、`yarn typecheck` 与 `yarn lint` 退出 0。
 - CI 终态：后端 `test.yml` run 45808938054（提交 `fff6080ad`）**success**——六个单测分片、Architecture Ratchet Gate（复杂度/并发/async 阻塞/后台任务/Ruff/mypy/启动性能）、Architecture Contract Gate、Coverage Report 全过；前端 `test.yml` run（提交 `d921c89de`）**success**。
 - 父仓两个子模块指针更新到后端 `fff6080ad`、前端 `d921c89de` 并推送。
+
+## 订阅按播出日历搜索（2026-11-27 17:1x，任务书：播出窗口）
+
+### 开工回执（任务 0 之后）
+- 理解的目标：定时搜索对齐播出时间——剧没播就不搜，播了才在窗口内密集搜；凡人修仙传周六 11:00 更新，11:00 前一次都不搜。
+- 顺序：1 字段与迁移 → 2 窗口判定纯函数 → 3 接进定时搜索 → 4 界面与接口 → 收口与反向验证。
+- 最大风险：加迁移必然前移 alembic head，会撞现有迁移测试的硬编码断言（已发生，见 BLOCKED 待裁决 3）。
+- 任务 0 核对：`test_subscription_schedule.py + test_subscription_calendar.py` = **25 passed**（与任务书一致）；`npx vue-tsc --noEmit` = exit 0（115 秒，与任务书一致）。
+
+### 进度
+- [x] 任务 1 字段与迁移：`subscribe` 加 `air_search_time`（String(5)）与 `air_search_weekdays`（String(16)），两列可空；迁移 `b7e1c4a9d2f3_air_search_window` 接在 `4c02986bd95d` 之后，upgrade/downgrade 都幂等。schema 侧校验时刻正则 `^([01]\d|2[0-3]):[0-5]\d$`、周几去重升序只收 1-7，两字段进 `CLEARABLE_OPTIONAL_FIELDS`；`contract.py` 加进 `_SUBSCRIPTION_FIELDS`、同时从 `_SUBSCRIPTION_HISTORY_FIELDS` 排除（历史表没加列）；`activity.py` 进 `EDIT_FIELDS`；`adapters/subscription.py` 投影两行。
+- [x] 任务 2 纯函数：新建 `app/domain/air_search.py`，`air_search_window_open(now, air_dates, weekdays, air_time, window_hours)` 无 I/O；`AIR_SEARCH_WINDOW_HOURS = 48`；日历取最新已播出日期、未来日期滤掉；周几取最近一次触发点；两来源取并集；都无证据放行。附 `season_air_dates(info, season)` 供链路取日期。
+- [x] 任务 3 接入：`_load_search_subscriptions` 在 `scheduled_interval` 非空时，对到期订阅再过 `_air_search_allowed`；只对电视剧且配了 `air_search_time` 的订阅识别媒体（`MediaChain().recognize_media` 走缓存），识别异常/拿不到媒体信息 → 只剩周几来源，仍无证据放行。手动、`sid`/`sids` 指定目标、`state=None` 三条路径一行未动，`subscription_search_due` 未改。
+- [x] 任务 4 界面与接口：弹窗「搜索周期」两选项改三值（跟随系统/自定义间隔/按播出日历），日历态出现「更新时刻」`type=time` 与「兜底周几」多选；三份 locale 各加 13 个键；`types.ts` 补两个可选字段；`mcp.py` 补两条字段描述；`api_mcp_schema.json` 手工在 `$defs.Subscribe` 加两字段（生成脚本跑不通，见任务书现状）；`docs/mcp-api.md` 新增「订阅的播出窗口搜索」一节。
+
+### 证据
+- 硬指标一：`pytest tests/integration/subscription/test_subscription_schedule.py tests/integration/subscription/test_subscription_calendar.py tests/integration/subscription/test_subscription_air_search.py tests/domain/test_air_search.py tests/db/migrations/test_subscription_air_search_migration.py -q` = **72 passed / 0 failed / 0 skipped**（基线 25 + 新增 47）。
+- 前端：`npx vue-tsc --noEmit` exit 0；`npx eslint` 五个改动文件 exit 0；`npx vitest run src/components/dialog/__tests__/SubscribeEditDialog.spec.ts` = **27 passed**（既有 spec 一字未改）。
+- pylint（`--jobs=1`）8 个改动/新增后端文件 **10.00/10**，0 条消息。
+- 反向验证：把 `calendar_trigger` 临时 `+timedelta(hours=1)`（窗口起点后挪 1 小时）→ `test_calendar_window_boundaries` 红（`assert air_search_window_open(datetime(2026,11,28,11,0), ['2026-11-28'], None, '11:00')` 返回 False），`1 failed / 44 passed`；还原 → **45 passed**。
+- MCP schema 一致性：`$defs.Subscribe.properties` 与 `Subscribe.model_json_schema()["properties"]` 键集合完全相同（`missing_in_json=[]`、`extra_in_json=[]`）。
+- 架构契约：`tests/contracts/architecture/test_architecture_dependencies.py` + `test_subscription_architecture.py` = **118 passed**。
+- 更宽回归：`tests/integration/subscription tests/db/migrations` = **1202 passed / 3 failed**（3 条全是已知项，见下）。
+- `git diff --check` 无输出；后端 9 个已跟踪改动 + 5 个新增文件、前端 5 个文件，除 `test_subscription_identity_migration.py` 外全在白名单内。
+
+### 已知事项（详见 BLOCKED.md 待裁决 3、4）
+- 加迁移必然前移 alembic head，改了 `tests/db/migrations/test_subscription_identity_migration.py` 两行期望值（`4c02986bd95d` → `b7e1c4a9d2f3`，并补一行新迁移的 down_revision 断言）；这是任务书白名单外的唯一越界，回退代价是该测试永久红。
+- `skills/database-operation/SKILL.md` 的 `subscribe` 表 Columns 清单未同步两列：仓库 AGENTS.md 要求同步，任务书白名单没有 `skills/`，按「必须加的写 BLOCKED.md」记录待裁决。
+- 环境性红（与本改动无关）：`test_database_index_migration.py::test_current_schema_reaches_current_alembic_head`（已用 `git stash` 回 HEAD 复现，子进程 sqlite `unable to open database file`）；`test_subscription_logging.py::test_subscription_symlink_cannot_read_another_log`（`WinError 1314`）；`tests/db/oper` 三条（`time.localtime` 传 36500 天前的负时间戳在 Windows 报 `OSError [Errno 22]`）；`tests/db/session/test_db_lazy_engine.py` 两条（子进程 asyncio `OSError [WinError 10106]`）；`tests/agent/tools/test_agent_subagent_terminal_scope.py` 11 条 ERROR（子进程 stdin 管道，沙箱限制）。
+- 未 commit、未 push、未部署。
