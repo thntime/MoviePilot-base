@@ -6,3 +6,31 @@
 	path = MoviePilot-Frontend
 	url = https://github.com/thntime/MoviePilot-Frontend.git
 	branch = v3
+[submodule "MoviePilot-Maintenance"]
+	path = MoviePilot-Maintenance
+	url = https://github.com/thntime/MoviePilot-Maintenance.git
+	branch = main
+[submodule "MoviePilot-Site-Collector"]
+	path = MoviePilot-Site-Collector
+	url = https://github.com/thntime/MoviePilot-Site-Collector.git
+	branch = main
+[submodule "MoviePilot-Server"]
+	path = MoviePilot-Server
+	url = https://github.com/thntime/MoviePilot-Server.git
+	branch = main
+[submodule "MoviePilot-Wiki"]
+	path = MoviePilot-Wiki
+	url = https://github.com/thntime/MoviePilot-Wiki.git
+	branch = main
+[submodule "MoviePilot-Plugins"]
+	path = MoviePilot-Plugins
+	url = https://github.com/thntime/MoviePilot-Plugins.git
+	branch = main
+[submodule "MoviePilot-App"]
+	path = MoviePilot-App
+	url = https://github.com/thntime/MoviePilot-App.git
+	branch = v2
+[submodule "MoviePilot-Resources"]
+	path = MoviePilot-Resources
+	url = https://github.com/thntime/MoviePilot-Resources.git
+	branch = main
