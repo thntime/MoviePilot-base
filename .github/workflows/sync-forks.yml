@@ -114,3 +114,21 @@ jobs:
             echo "已创建 issue #${number}"
           fi
           exit 1
+
+      - name: Close issue when healthy
+        if: steps.audit.outputs.unhealthy == 'false'
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100" \
+            --jq "[.[] | select(.title == \"${ISSUE_TITLE}\") | .number][0] // empty")
+          if [ -z "${existing}" ]; then
+            echo "没有待关闭的同步异常 issue"
+            exit 0
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${existing}/comments" \
+            -f body="本轮巡检 9 个 fork 均正常，自动关闭。巡检记录：${RUN_URL}" > /dev/null
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/${existing}" -f state=closed > /dev/null
+          echo "已关闭 issue #${existing}"
+
