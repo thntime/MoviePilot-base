@@ -859,3 +859,16 @@
 - 上线：前端 `f2b9a0ff style(subscribe): 更新时刻改成时/分下拉`（5 文件 +85/-8）已推 v3。只改前端时后端 push 不触发镜像，按历史做法用 `gh workflow run 403267818 --ref v3`（workflow_dispatch）手动构建，run `46018583788` success。
 - 部署：备份 `docker-compose.yml.bak-20261127-2250` → pull → `up -d --force-recreate`，第 9 次轮询（约 27 秒）healthy；`APP_VERSION` / `FRONTEND_VERSION` = `v3.2.15.4`；前端分块更新为 `SubscribeEditDialog-D6er7wv6.js`（含 `airSearchHour`）；`ready=200`、`web=200`。
 - 回滚点：compose 备份 `docker-compose.yml.bak-20261127-2250`；上一版镜像 digest `sha256:49b9a2050915`（v3.2.15.3）。
+
+### 窗口内重试间隔改分钟级 + 活动字段中文化（2026-11-27 23:3x，用户三点要求）
+用户反馈：默认改成 15 分钟、要能在订阅里设、活动记录里那行字段变更太技术化。
+
+- 根因（第一轮实测确认）：把「搜索周期」做成三态时，切到「按播出日历」会把 `search_interval` 清成 `null`，等于日历模式没有自己的重试间隔，掉回系统 `SUBSCRIBE_SEARCH_INTERVAL`（代码默认 24 小时，生产未设置）。而窗口只有 48 小时，实测凡人修仙传 `last_search` 是 22:02，按 24 小时算窗口内只够重试 1–2 次。
+- 后端：新增 `air_search_interval_minutes`（1–1440，空值按 `AIR_SEARCH_RETRY_MINUTES = 15`）。`subscription_search_due` 在启用播出窗口时按分钟判定到期，`search_interval` 在该模式下不参与；未启用窗口的订阅行为完全不变。迁移 `c3f8a1d6e2b4_air_search_retry` 接在 `b7e1c4a9d2f3` 后。
+- 前端：日历模式改成「时 / 分 / 窗口内间隔（分钟）」三列，间隔空值显示并提交 15。活动详情把 `air_search_time`、`air_search_weekdays`、`air_search_interval_minutes` 翻成中文名，兜底周几的 ISO 周号翻成星期名（`6,7` → `周六、周日`），分钟数带单位（`15 分钟`），不再直接显示原始字段名和裸数字。
+- 验收：后端 `test_subscription_schedule + test_subscription_calendar + test_subscription_air_search + domain/test_air_search + 三个迁移测试` = **86 passed**；生成物（world / skill docs / 契约基线）**62 passed**；`exports.py --check` exit 0；pylint 9 个文件 **10.00/10**；前端 `SubscribeEditDialog.spec` **28 passed**、`SubscribeActivityDialog.spec` **17 passed**、`vue-tsc` 与 `eslint` exit 0。
+- CI：首轮 `Architecture Ratchet Gate` 红在 Ruff `[I001]`（`dataclasses` 排在 `datetime` 之后），修 import 顺序后 `676b09ca1` 全绿（Unit Tests `46025276700`、Docker Hub Image `46025276786`、Pylint `46025276829` 均 success）。
+- 部署：备份 `docker-compose.yml.bak-20261127-2340` → pull → `up -d --force-recreate`，第 9 次轮询 healthy；`APP_VERSION = v3.2.15.6`；`alembic_version = c3f8a1d6e2b4`，三列齐全；凡人修仙传（id=27）`air_search_time='11:00'`、`air_search_weekdays='6'`、`air_search_interval_minutes=NULL` → 按默认 15 分钟；前端分块 `SubscribeEditDialog-CW1Hi9Z6.js` 含 `airSearchRetryMinutes`；`ready=200`、`web=200`。
+- 生产核算：`last_search=2026-11-27T14:02:51Z` + 15 分钟 = `14:17:51Z`（北京 22:17），已过 → 窗口一开即搜，此后每 15 分钟一次。
+- 回滚点：compose 备份 `docker-compose.yml.bak-20261127-2340`；上一版镜像 digest `sha256:f22dc92899ec`（v3.2.15.4）。
+- 待办不变：今天周五，凡人订阅的窗口要到明天周六 11:00 才打开，运行时「窗口外跳过」仍未被真实调度观察过。
