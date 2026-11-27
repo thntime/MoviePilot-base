@@ -829,3 +829,24 @@
 - `skills/database-operation/SKILL.md` 的 `subscribe` 表 Columns 清单未同步两列：仓库 AGENTS.md 要求同步，任务书白名单没有 `skills/`，按「必须加的写 BLOCKED.md」记录待裁决。
 - 环境性红（与本改动无关）：`test_database_index_migration.py::test_current_schema_reaches_current_alembic_head`（已用 `git stash` 回 HEAD 复现，子进程 sqlite `unable to open database file`）；`test_subscription_logging.py::test_subscription_symlink_cannot_read_another_log`（`WinError 1314`）；`tests/db/oper` 三条（`time.localtime` 传 36500 天前的负时间戳在 Windows 报 `OSError [Errno 22]`）；`tests/db/session/test_db_lazy_engine.py` 两条（子进程 asyncio `OSError [WinError 10106]`）；`tests/agent/tools/test_agent_subagent_terminal_scope.py` 11 条 ERROR（子进程 stdin 管道，沙箱限制）。
 - 未 commit、未 push、未部署。
+
+### 提交、CI 与上线（2026-11-27 18:4x）
+- 后端 `a20ca0d5e feat(subscribe): 定时搜索按播出日历放行`（15 文件 +974/-3）、前端 `6bf1aaa5 feat(subscribe): 搜索周期支持按播出日历`（5 文件 +127/-12）已推 v3；父仓 `5f48645` 同步指针推 main。
+- 首轮 CI 红 4 个 job，全部是「新增模块 + 新增 schema 字段」触发的生成物/基线过期（详见 BLOCKED 待裁决 5）：
+  1. `Architecture Contract Gate`：`schema 导出清单已变化` → 根因是我在 `subscribe.py` 用 `import re`，让 `re` 成为两个 schema 模块的导出冲突源；改成 `from re import compile as _re_compile` 后导出清单零变化，比刷新清单更干净。
+  2. `Architecture Ratchet Gate`：启动性能宿主模块数 +1（651→652 等）→ 只同步三个计数，时间样本与 platform 标记不动（本机导入 ~4900ms 超预算，CI 实测 1935–1984ms 正常）。
+  3. `Unit Tests (1/6)`：`test_new_host_production_modules_use_single_word_filenames` 报 `['app/domain/air_search.py']` → 改名 `airwindow.py`（单词命名），比登记进 `FILENAME_POLICY` 更干净。
+  4. `Unit Tests (5/6)`：`evaluation world` 订阅字段集合与技能文档生成物过期 → 同步 `scripts/evaluation/world.py`，跑 `generate_agent_skill_docs.py`（顺带把 BLOCKED 待裁决 4 的订阅表列清单带出来了）。
+- 修复提交 `805fe61c8 fix(ci): 播出窗口模块改名并同步生成物与架构基线`（10 文件 +18/-15），合并远端版本提交后推送。
+- 第二轮 CI 只剩 `Coverage Report` 红：`app/schemas/subscribe.py: 存量覆盖率下降 97.45%->95.77%`。补测 `6b62003eb test(subscribe): 覆盖播出窗口校验器的空白与列表分支`（+47 行），未覆盖行从 13 降到 6（剩余 101/105/115-116/121/382 全是既有分支），本地子集覆盖率 93.53% → 97.30%。
+- 最终 CI（run `45982869236` Unit Tests / `45982869332` Docker Hub Image / `45982869265` Pylint）**全部 success**，镜像发布 **v3.2.15.3**。
+- 部署：`/data/movie-pilot` 备份 `docker-compose.yml.bak-20261127-1840` → `docker compose pull` → `up -d --force-recreate`，第 6 次轮询（约 18 秒）healthy；镜像 ID `49b9a2050915`（5 分钟前构建）。
+- 真机验证（容器 `moviepilot-v3`）：
+  - `version.py`：`APP_VERSION = 'v3.2.15.3'`、`FRONTEND_VERSION = 'v3.2.15.3'`；
+  - `/app/app/domain/airwindow.py` 存在（8075 字节，18:32）；
+  - `alembic_version = b7e1c4a9d2f3`，`subscribe` 表新增列 `['air_search_time', 'air_search_weekdays']`；
+  - 存量订阅 13 条全部 `air_search_time IS NULL`（状态全是 R）→ 行为零变化；
+  - 前端产物 `assets/SubscribeEditDialog-BECHDBvV.js` 含 `air_search_time`，`SubscribeEditDialog-BECHDBvV.js` 与 `main-CiJ7jTeB.js` 含 `searchIntervalCalendar`；
+  - `/health/ready=200`、`web=200`。
+- 回滚点：compose 备份 `docker-compose.yml.bak-20261127-1840`；上一版镜像 digest `sha256:6c0dfb3a6ec4`。
+- 待办：真机上还没给任何订阅配过 `air_search_time`，所以「窗口外跳过定时搜索」这条运行时行为尚未在真实调度里观察过；下次有人配置后看日志「订阅《X》未到播出窗口，本轮定时搜索跳过」即可确认。

@@ -72,3 +72,21 @@
 - 现状：`skills/database-operation/SKILL.md` 里 `### subscribe` 的 `Columns` 清单仍是旧的，缺 `air_search_time`、`air_search_weekdays` 两列。
 - `### subscribehistory` 不需要改：本次没有给历史表加列，两字段已在 `_SUBSCRIPTION_HISTORY_FIELDS` 里排除。
 - 影响：只影响 agent 用 `database_operation` 查订阅表时的字段提示，不影响功能与数据。若批准，在该行 Columns 清单的 `search_interval` 后面补两列名即可。
+
+**已解决（2026-11-27 18:1x，CI 修复轮）**：跑 `scripts/generate_agent_skill_docs.py` 刷新技能文档生成物时，该清单与 `skills/moviepilot-api/api/subscription.md` 被生成器自动带出，两列已进文档。此条不再是待裁决项，留作记录。
+
+## 待裁决 5 · CI 门禁要求的生成物与基线刷新落在任务书白名单外（2026-11-27，播出窗口）
+
+首轮推送后 CI 红了 4 个 job，根因全部是「新增模块 + 新增 schema 字段」触发的生成物/基线过期，修这些必须改白名单外文件。已全部落地并本地验证，列在这里供裁决：
+
+| 文件 | 为什么必须改 |
+|---|---|
+| `app/domain/airwindow.py`（原 `air_search.py`） | 宿主新模块必须单词文件名（`test_new_host_production_modules_use_single_word_filenames`），多词文件要登记进 `FILENAME_POLICY` 才放行；改名比登记更干净 |
+| `app/schemas/subscribe.py` 的 `from re import compile as _re_compile` | 原写法 `import re` 让 `re` 变成两个 schema 模块的导出冲突源，`scripts/schema/exports.py` 的仲裁归属会从 `file` 翻到 `subscribe`；改用私有别名后导出清单零变化 |
+| `scripts/evaluation/world.py` | `_SUBSCRIPTION_FIELDS` 必须等于 `$defs.Subscribe.properties` 的键集合，加两字段后同步 |
+| `skills/database-operation/SKILL.md`、`skills/moviepilot-api/api/subscription.md` | `generate_agent_skill_docs.py` 的生成物，不刷新则 `test_full_regeneration_is_current_and_idempotent` 红 |
+| `tests/fixtures/architecture/startup-performance-baseline.json` | 新增模块使加载宿主模块数 +1（637→638、651→652、653→654）；**只改计数，时间样本与 platform 标记一字未动**（本机导入 ~4900ms 超 3000ms 预算，CI 上实测 1935–1984ms 正常，写进去会污染基线） |
+| `tests/fixtures/architecture/dependency-baseline.json` | `baseline.py --write-host` 生成：+1 模块、+2 条边（`search -> airwindow`、`search -> identity`）、edge_count 11241→11243 |
+| `docs/architecture-overview.md` | `scripts/refresh_architecture_docs.py` 生成：内部导入边 11,241→11,243 |
+
+判断依据：这些改动全是「让既有门禁重新对上新事实」，没有放宽任何门禁、没有下调覆盖率或复杂度水位、没有改 CI 配置。若认为越界，回退的代价是 4 个 CI job 永久红、镜像无法发布。
