@@ -850,3 +850,12 @@
   - `/health/ready=200`、`web=200`。
 - 回滚点：compose 备份 `docker-compose.yml.bak-20261127-1840`；上一版镜像 digest `sha256:6c0dfb3a6ec4`。
 - 待办：真机上还没给任何订阅配过 `air_search_time`，所以「窗口外跳过定时搜索」这条运行时行为尚未在真实调度里观察过；下次有人配置后看日志「订阅《X》未到播出窗口，本轮定时搜索跳过」即可确认。
+
+### 时间选择器返工（2026-11-27 22:4x，用户反馈「时间选择器太丑了」）
+- 根因：`更新时刻` 用的是 `VTextField type="time"`，渲染成浏览器原生 `<input type="time">`；深色主题下原生控件（时钟图标、spinner、字体）由浏览器决定，与卡片里其它 Vuetify 下拉完全不同色。项目里 `AccountSettingNotification.vue` 的静默时段也是同一种写法，属同类问题但本次不动。
+- 改法：换成「时」「分」两个 `VSelect` 并排——小时 00–23 全量；分钟以 5 分钟为档（00/05/…/55），已存的非整档值（如 11:07）动态补进选项，避免下拉显示为空把原值吃掉。两个下拉共同写回 `air_search_time`，先选任一个时另一个补 `00`。三份 locale 补 `airSearchHour`/`airSearchMinute`。
+- 验证：`npx vitest run src/components/dialog/__tests__/SubscribeEditDialog.spec.ts` = **28 passed**（新增 1 条「时/分联动写回 11:30」）；`npx eslint`（5 个改动文件）exit 0；`npx vue-tsc --noEmit` exit 0。
+- 反向验证：把分钟 setter 临时改成 `${hour}:00` → `AssertionError: expected ... { air_search_time: '11:30' }`，实际 `"air_search_time": "11:00"`，1 failed；还原 → 1 passed。
+- 上线：前端 `f2b9a0ff style(subscribe): 更新时刻改成时/分下拉`（5 文件 +85/-8）已推 v3。只改前端时后端 push 不触发镜像，按历史做法用 `gh workflow run 403267818 --ref v3`（workflow_dispatch）手动构建，run `46018583788` success。
+- 部署：备份 `docker-compose.yml.bak-20261127-2250` → pull → `up -d --force-recreate`，第 9 次轮询（约 27 秒）healthy；`APP_VERSION` / `FRONTEND_VERSION` = `v3.2.15.4`；前端分块更新为 `SubscribeEditDialog-D6er7wv6.js`（含 `airSearchHour`）；`ready=200`、`web=200`。
+- 回滚点：compose 备份 `docker-compose.yml.bak-20261127-2250`；上一版镜像 digest `sha256:49b9a2050915`（v3.2.15.3）。
